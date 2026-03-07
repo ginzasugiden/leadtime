@@ -1,10 +1,11 @@
 /**
  * Web API エントリポイント（GasAuth ライブラリで認証）
- * GitHub Pages から呼び出すための doGet / doPost
+ * GitHub Pages から doGet (JSONP風) で呼び出す
+ * ※ GAS Web App は POST で CORS ヘッダーを返せないため GET に統一
  */
 
 /**
- * CORS対応のJSONレスポンスを返すヘルパー
+ * JSONレスポンスを返すヘルパー
  */
 function createJsonResponse_(data) {
   return ContentService
@@ -13,15 +14,23 @@ function createJsonResponse_(data) {
 }
 
 /**
- * GETリクエスト（CORS preflight 対応）
+ * GETリクエスト（全アクションをURLパラメータで受け取る）
+ * items等の複雑なデータは JSON文字列 として渡す
  */
 function doGet(e) {
-  var action = (e && e.parameter && e.parameter.action) || '';
-  return handleAction_(action, e && e.parameter);
+  var params = (e && e.parameter) || {};
+  var action = params.action || '';
+
+  // items パラメータがJSON文字列の場合はパースする
+  if (params.items) {
+    try { params.items = JSON.parse(params.items); } catch (_) { params.items = []; }
+  }
+
+  return handleAction_(action, params);
 }
 
 /**
- * POSTリクエスト
+ * POSTリクエスト（フォールバック用）
  */
 function doPost(e) {
   var params = JSON.parse(e.postData.contents || '{}');

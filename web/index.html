@@ -425,23 +425,31 @@ function escapeHtml(str) {
 }
 
 function callGas(action, params) {
-  var body = Object.assign({ action: action }, params || {});
+  var query = { action: action };
   var token = getToken();
-  if (token) body.token = token;
+  if (token) query.token = token;
 
-  return fetch(GAS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify(body)
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    if (data.status === 401) {
-      clearToken();
-      showLogin();
-    }
-    return data;
-  });
+  // パラメータをURLクエリに変換（配列/オブジェクトはJSON文字列化）
+  if (params) {
+    Object.keys(params).forEach(function(k) {
+      var v = params[k];
+      query[k] = (typeof v === 'object') ? JSON.stringify(v) : v;
+    });
+  }
+
+  var qs = Object.keys(query).map(function(k) {
+    return encodeURIComponent(k) + '=' + encodeURIComponent(query[k]);
+  }).join('&');
+
+  return fetch(GAS_URL + '?' + qs)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.status === 401) {
+        clearToken();
+        showLogin();
+      }
+      return data;
+    });
 }
 
 // ── Screen switching ──
