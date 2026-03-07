@@ -1,12 +1,105 @@
 /**
- * Web API エントリポイント（GasAuth ライブラリで認証）
- * GitHub Pages から doGet (JSONP風) で呼び出す
- * ※ GAS Web App は POST で CORS ヘッダーを返せないため GET に統一
+ * Web API エントリポイント（認証機能内蔵）
+ * GitHub Pages から doGet (JSONP) で呼び出す
  */
+
+// ── 認証設定 ──
+var AUTH_SHEET_ID = '1iYeV2SbOVoRH8Qjm2d1w5tWmhlE_zcc-yO1tDSLN7Rk';
+var AUTH_SHEET_NAME = 'api_key';
+var SESSION_TTL = 7200; // 2時間（秒）
+
+// ────────────────────────────────────────
+// 認証・セッション管理
+// ────────────────────────────────────────
+
+/**
+ * スプレッドシートで id + pw を照合
+ * @returns {{ success:true, userId, sname, sid, email, licenseKey, serviceSecret } | { success:false, message }}
+ */
+function getUserFromSheet_(userId, password) {
+  var ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
+  var sheet = ss.getSheetByName(AUTH_SHEET_NAME);
+  var data = sheet.getDataRange().getValues();
+
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    if (String(row[0]) !== userId) continue;
+
+    // flag=0 のみ有効
+    if (String(row[9]) !== '0') {
+      return { success: false, message: 'このアカウントは無効です' };
+    }
+
+    // 有効期限チェック
+    var expiry = row[10];
+    if (expiry) {
+      if (new Date(expiry) <= new Date()) {
+        return { success: false, message: 'アカウントの有効期限が切れています' };
+      }
+    }
+
+    // パスワード照合（BASE64デコードして比較）
+    var decoded = Utilities.newBlob(Utilities.base64Decode(String(row[5]))).getDataAsString();
+    if (decoded !== password) {
+      return { success: false, message: 'ログインIDまたはパスワードが違います' };
+    }
+
+    return {
+      success: true,
+      userId: String(row[0]),
+      licenseKey: String(row[2]),
+      serviceSecret: String(row[3]),
+      sid: String(row[6]),
+      sname: String(row[7]),
+      email: String(row[8])
+    };
+  }
+
+  return { success: false, message: 'ログインIDまたはパスワードが違います' };
+}
+
+/**
+ * セッショントークンを生成・CacheServiceに保存
+ * @returns {string} token
+ */
+function createSession_(userId, licenseKey, serviceSecret) {
+  var token = Utilities.getUuid();
+  var cache = CacheService.getScriptCache();
+  cache.put('session_' + token, JSON.stringify({
+    userId: userId,
+    licenseKey: licenseKey,
+    serviceSecret: serviceSecret
+  }), SESSION_TTL);
+  return token;
+}
+
+/**
+ * トークンからセッション情報を取得
+ * @returns {{ userId, licenseKey, serviceSecret } | null}
+ */
+function validateSession_(token) {
+  if (!token) return null;
+  var cache = CacheService.getScriptCache();
+  var data = cache.get('session_' + token);
+  if (!data) return null;
+  return JSON.parse(data);
+}
+
+/**
+ * セッション削除
+ */
+function deleteSession_(token) {
+  if (!token) return;
+  var cache = CacheService.getScriptCache();
+  cache.remove('session_' + token);
+}
+
+// ────────────────────────────────────────
+// エントリポイント
+// ────────────────────────────────────────
 
 /**
  * JSONP / JSON レスポンスを返すヘルパー
- * callbackパラメータがあればJSONP形式、なければ通常JSON
  */
 function createJsonResponse_(data, callback) {
   if (callback) {
@@ -20,16 +113,13 @@ function createJsonResponse_(data, callback) {
 }
 
 /**
- * GETリクエスト（全アクションをURLパラメータで受け取る）
- * callbackパラメータがあればJSONP形式で返す
- * items等の複雑なデータは JSON文字列 として渡す
+ * GETリクエスト（JSONP対応）
  */
 function doGet(e) {
   var params = (e && e.parameter) || {};
   var action = params.action || '';
   var callback = params.callback || '';
 
-  // items パラメータがJSON文字列の場合はパースする
   if (params.items) {
     try { params.items = JSON.parse(params.items); } catch (_) { params.items = []; }
   }
@@ -60,24 +150,24 @@ function handleAction_(action, params, callback) {
       if (!userId || !password) {
         return resp_({ error: 'userId と password は必須です' });
       }
-      var result = GasAuth.getUserFromSheet(userId, password);
+      var result = getUserFromSheet_(userId, password);
       if (!result.success) {
         return resp_({ error: result.message });
       }
-      var token = GasAuth.createSession(result.userId, result.licenseKey, result.serviceSecret);
+      var token = createSession_(result.userId, result.licenseKey, result.serviceSecret);
       return resp_({ token: token, sname: result.sname });
     }
 
     // ── 認証不要: ログアウト ──
     if (action === 'logout') {
       var logoutToken = (params && params.token) || '';
-      GasAuth.deleteSession(logoutToken);
+      deleteSession_(logoutToken);
       return resp_({ message: 'ログアウトしました' });
     }
 
     // ── 認証必要なアクション ──
     var token = (params && params.token) || '';
-    var creds = GasAuth.validateSession(token);
+    var creds = validateSession_(token);
     if (!creds) {
       return resp_({ error: 'セッションが無効です。再ログインしてください。', status: 401 });
     }
@@ -112,7 +202,7 @@ function handleAction_(action, params, callback) {
 }
 
 // ────────────────────────────────────────
-// Wrapper 関数（セッションの認証情報を使用）
+// 楽天API Wrapper
 // ────────────────────────────────────────
 
 /**
