@@ -38,8 +38,10 @@ function getUserFromSheet_(userId, password) {
       }
     }
 
-    // パスワード照合（BASE64デコードして比較）
-    var decoded = Utilities.newBlob(Utilities.base64Decode(String(row[5]))).getDataAsString();
+    // パスワード照合（「BASE64:」プレフィックスを除去してデコード）
+    var pwRaw = String(row[5]);
+    if (pwRaw.indexOf('BASE64:') === 0) pwRaw = pwRaw.substring(7);
+    var decoded = Utilities.newBlob(Utilities.base64Decode(pwRaw)).getDataAsString();
     if (decoded !== password) {
       return { success: false, message: 'ログインIDまたはパスワードが違います' };
     }
