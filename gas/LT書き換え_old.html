@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+  </head>
+  <body>
+    /*****
+<!--
+
+
+
+//LT書き換え.gs
+function autoReplaceLeadTime() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const productSheet = ss.getSheetByName('商品情報'); // 商品情報シート
+  const leadTimeSheet = ss.getSheetByName('リードタイム'); // リードタイムシート
+  
+  // リードタイムマッピングの作成 (ID → 名称 / 名称 → ID)
+  const leadTimeData = leadTimeSheet.getDataRange().getValues();
+  const idToNameMap = {};
+  const nameToIdMap = {};
+  
+  for (let i = 1; i < leadTimeData.length; i++) {
+    const id = leadTimeData[i][0];
+    const name = leadTimeData[i][1];
+    idToNameMap[id] = name;
+    nameToIdMap[name] = id;
+  }
+  
+  // 商品情報シートのデータ取得
+  const productData = productSheet.getDataRange().getValues();
+  const leadTimeColIndex = productData[0].indexOf('出荷リードタイム');
+  
+  if (leadTimeColIndex === -1) {
+    Logger.log('出荷リードタイム列が見つかりません');
+    return;
+  }
+  
+  // 出荷リードタイムの自動変換
+  for (let i = 1; i < productData.length; i++) {
+    const value = productData[i][leadTimeColIndex];
+    
+    // 自動判定して変換
+    if (idToNameMap[value]) {
+      // 値がIDの場合（ID → 名称に変換）
+      productSheet.getRange(i + 1, leadTimeColIndex + 1).setValue(idToNameMap[value]);
+    } else if (nameToIdMap[value]) {
+      // 値が名称の場合（名称 → IDに変換）
+      productSheet.getRange(i + 1, leadTimeColIndex + 1).setValue(nameToIdMap[value]);
+    }
+  }
+  
+  Logger.log('出荷リードタイムの自動変換が完了しました');
+}
+
+
+
+
+-->
+******/
+  </body>
+</html>
