@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(clasp push:*)",
+      "Bash(clasp deploy:*)",
+      "Bash(gh repo:*)",
+      "Bash(gh api:*)",
+      "Bash(clasp deployments:*)"
+    ]
+  }
+}
