@@ -5,9 +5,15 @@
  */
 
 /**
- * JSONレスポンスを返すヘルパー
+ * JSONP / JSON レスポンスを返すヘルパー
+ * callbackパラメータがあればJSONP形式、なければ通常JSON
  */
-function createJsonResponse_(data) {
+function createJsonResponse_(data, callback) {
+  if (callback) {
+    return ContentService
+      .createTextOutput(callback + '(' + JSON.stringify(data) + ')')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
   return ContentService
     .createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
@@ -15,18 +21,20 @@ function createJsonResponse_(data) {
 
 /**
  * GETリクエスト（全アクションをURLパラメータで受け取る）
+ * callbackパラメータがあればJSONP形式で返す
  * items等の複雑なデータは JSON文字列 として渡す
  */
 function doGet(e) {
   var params = (e && e.parameter) || {};
   var action = params.action || '';
+  var callback = params.callback || '';
 
   // items パラメータがJSON文字列の場合はパースする
   if (params.items) {
     try { params.items = JSON.parse(params.items); } catch (_) { params.items = []; }
   }
 
-  return handleAction_(action, params);
+  return handleAction_(action, params, callback);
 }
 
 /**
@@ -35,41 +43,43 @@ function doGet(e) {
 function doPost(e) {
   var params = JSON.parse(e.postData.contents || '{}');
   var action = params.action || '';
-  return handleAction_(action, params);
+  return handleAction_(action, params, '');
 }
 
 /**
  * アクション振り分け
  */
-function handleAction_(action, params) {
+function handleAction_(action, params, callback) {
+  function resp_(data) { return createJsonResponse_(data, callback); }
+
   try {
     // ── 認証不要: ログイン ──
     if (action === 'login') {
       var userId   = (params && params.userId) || '';
       var password = (params && params.password) || '';
       if (!userId || !password) {
-        return createJsonResponse_({ error: 'userId と password は必須です' });
+        return resp_({ error: 'userId と password は必須です' });
       }
       var result = GasAuth.getUserFromSheet(userId, password);
       if (!result.success) {
-        return createJsonResponse_({ error: result.message });
+        return resp_({ error: result.message });
       }
       var token = GasAuth.createSession(result.userId, result.licenseKey, result.serviceSecret);
-      return createJsonResponse_({ token: token, sname: result.sname });
+      return resp_({ token: token, sname: result.sname });
     }
 
     // ── 認証不要: ログアウト ──
     if (action === 'logout') {
       var logoutToken = (params && params.token) || '';
       GasAuth.deleteSession(logoutToken);
-      return createJsonResponse_({ message: 'ログアウトしました' });
+      return resp_({ message: 'ログアウトしました' });
     }
 
     // ── 認証必要なアクション ──
     var token = (params && params.token) || '';
     var creds = GasAuth.validateSession(token);
     if (!creds) {
-      return createJsonResponse_({ error: 'セッションが無効です。再ログインしてください。', status: 401 });
+      return resp_({ error: 'セッションが無効です。再ログインしてください。', status: 401 });
     }
 
     var authHeader = 'ESA ' + Utilities.base64Encode(creds.serviceSecret + ':' + creds.licenseKey);
@@ -77,27 +87,27 @@ function handleAction_(action, params) {
     switch (action) {
 
       case 'getLeadTimeList':
-        return createJsonResponse_(getLeadTimeListJson_(authHeader));
+        return resp_(getLeadTimeListJson_(authHeader));
 
       case 'searchItems':
         var keyword = (params && params.keyword) || '';
         if (!keyword) {
-          return createJsonResponse_({ error: 'keyword は必須です' });
+          return resp_({ error: 'keyword は必須です' });
         }
-        return createJsonResponse_(searchItemsJson_(keyword, authHeader));
+        return resp_(searchItemsJson_(keyword, authHeader));
 
       case 'updateLeadTime':
         var items = (params && params.items) || [];
         if (!items.length) {
-          return createJsonResponse_({ error: 'items 配列は必須です' });
+          return resp_({ error: 'items 配列は必須です' });
         }
-        return createJsonResponse_(updateLeadTimeJson_(items, authHeader));
+        return resp_(updateLeadTimeJson_(items, authHeader));
 
       default:
-        return createJsonResponse_({ error: '不明な action: ' + action });
+        return resp_({ error: '不明な action: ' + action });
     }
   } catch (err) {
-    return createJsonResponse_({ error: err.message });
+    return resp_({ error: err.message });
   }
 }
 

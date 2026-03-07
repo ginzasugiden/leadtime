@@ -424,31 +424,45 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+var _jsonpCounter = 0;
+
 function callGas(action, params) {
-  var qs = new URLSearchParams();
-  qs.set('action', action);
-  var token = getToken();
-  if (token) qs.set('token', token);
+  return new Promise(function(resolve, reject) {
+    var cbName = '_jsonpCb_' + (++_jsonpCounter) + '_' + Date.now();
 
-  if (params) {
-    Object.keys(params).forEach(function(k) {
-      var v = params[k];
-      qs.set(k, (typeof v === 'object') ? JSON.stringify(v) : v);
-    });
-  }
+    var qs = new URLSearchParams();
+    qs.set('action', action);
+    qs.set('callback', cbName);
+    var token = getToken();
+    if (token) qs.set('token', token);
 
-  return fetch(GAS_URL + '?' + qs.toString(), {
-    mode: 'cors',
-    redirect: 'follow'
-  })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      if (data.status === 401) {
+    if (params) {
+      Object.keys(params).forEach(function(k) {
+        var v = params[k];
+        qs.set(k, (typeof v === 'object') ? JSON.stringify(v) : v);
+      });
+    }
+
+    // コールバック関数をグローバルに登録
+    window[cbName] = function(data) {
+      delete window[cbName];
+      script.parentNode && script.parentNode.removeChild(script);
+      if (data && data.status === 401) {
         clearToken();
         showLogin();
       }
-      return data;
-    });
+      resolve(data);
+    };
+
+    var script = document.createElement('script');
+    script.src = GAS_URL + '?' + qs.toString();
+    script.onerror = function() {
+      delete window[cbName];
+      script.parentNode && script.parentNode.removeChild(script);
+      reject(new Error('通信エラー'));
+    };
+    document.body.appendChild(script);
+  });
 }
 
 // ── Screen switching ──
