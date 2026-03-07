@@ -199,7 +199,7 @@ function handleAction_(action, params, callback) {
         return resp_({ error: '不明な action: ' + action });
     }
   } catch (err) {
-    return resp_({ error: err.message });
+    return resp_({ error: err.message, stack: err.stack });
   }
 }
 
