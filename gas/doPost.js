@@ -246,6 +246,7 @@ function handleAction_(action, params, callback) {
 function getLeadTimeListJson_(authHeader) {
   var endpoint = 'https://api.rms.rakuten.co.jp/es/1.0/shop/operationLeadTime';
 
+  Logger.log('[getLeadTimeListJson_] endpoint=' + endpoint);
   var response = UrlFetchApp.fetch(endpoint, {
     method: 'get',
     headers: {
@@ -255,8 +256,11 @@ function getLeadTimeListJson_(authHeader) {
     muteHttpExceptions: true
   });
 
-  if (response.getResponseCode() !== 200) {
-    return { error: 'API失敗: ' + response.getResponseCode() };
+  var respCode = response.getResponseCode();
+  Logger.log('[getLeadTimeListJson_] status=' + respCode);
+  if (respCode !== 200) {
+    Logger.log('[getLeadTimeListJson_] body=' + response.getContentText());
+    return { error: 'API失敗: ' + respCode, detail: response.getContentText() };
   }
 
   var root = XmlService.parse(response.getContentText()).getRootElement();
@@ -287,33 +291,34 @@ function searchItemsJson_(keyword, authHeader) {
   var cursorMark = '';
 
   do {
-    var url = endpoint + '?manageNumber=' + encodeURIComponent(keyword) + '&hits=100';
+    var url = endpoint + '?title=' + encodeURIComponent(keyword) + '&hits=100';
     if (cursorMark) {
       url += '&cursorMark=' + encodeURIComponent(cursorMark);
     }
+    Logger.log('[searchItemsJson_] url=' + url);
 
     var resp = UrlFetchApp.fetch(url, {
       method: 'get',
       headers: {
-        'Authorization': authHeader,
-        'Content-Type': 'application/json'
+        'Authorization': authHeader
       },
       muteHttpExceptions: true
     });
+    Logger.log('[searchItemsJson_] status=' + resp.getResponseCode());
     var json = JSON.parse(resp.getContentText());
+    Logger.log('[searchItemsJson_] numFound=' + (json.numFound || 0));
 
     if (Array.isArray(json.results)) {
       for (var i = 0; i < json.results.length; i++) {
         var p = json.results[i].item;
-        var variantKeys = Object.keys(p.variants || {});
-        for (var j = 0; j < variantKeys.length; j++) {
-          var vid = variantKeys[j];
-          var skuId = (p.variants[vid] && p.variants[vid].merchantDefinedSkuId) || '';
+        var variants = p.variants || [];
+        for (var j = 0; j < variants.length; j++) {
+          var v = variants[j];
           results.push({
             manageNumber: p.manageNumber || '',
             itemNumber: p.itemNumber || '',
-            variantId: vid,
-            skuId: skuId,
+            variantId: v.variantId || '',
+            skuId: v.merchantDefinedSkuId || '',
             title: p.title || '',
             tagline: p.tagline || ''
           });
@@ -341,11 +346,12 @@ function updateLeadTimeJson_(items, authHeader) {
 
     var payload = {
       mode: 'ABSOLUTE',
-      quantity: item.quantity,
+      quantity: Number(item.quantity),
       operationLeadTime: {
-        normalDeliveryTimeId: item.leadTimeId
+        normalDeliveryTimeId: Number(item.leadTimeId)
       }
     };
+    Logger.log('[updateLeadTimeJson_] endpoint=' + endpoint + ' payload=' + JSON.stringify(payload));
 
     try {
       var response = UrlFetchApp.fetch(endpoint, {
@@ -359,10 +365,12 @@ function updateLeadTimeJson_(items, authHeader) {
       });
 
       var code = response.getResponseCode();
+      var respBody = response.getContentText();
+      Logger.log('[updateLeadTimeJson_] status=' + code + ' body=' + respBody);
       results.push({
         manageNumber: item.manageNumber,
         variantId: item.variantId,
-        success: code === 204,
+        success: code === 200 || code === 204,
         status: code
       });
     } catch (err) {
