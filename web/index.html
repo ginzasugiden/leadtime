@@ -640,7 +640,7 @@ function buildLtSelect(name, list, currentValue) {
   html += '<option value="">-- 未設定 --</option>';
   for (var i = 0; i < list.length; i++) {
     var lt = list[i];
-    var selected = (String(lt.id) === String(currentValue)) ? ' selected' : '';
+    var selected = (currentValue != null && currentValue !== '' && Number(lt.id) === Number(currentValue)) ? ' selected' : '';
     html += '<option value="' + lt.id + '"' + selected + '>' + lt.name + '</option>';
   }
   html += '</select>';

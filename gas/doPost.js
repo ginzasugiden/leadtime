@@ -358,11 +358,17 @@ function searchItemsWithLTJson_(keyword, authHeader) {
   for (var i = 0; i < uniqueManageNumbers.length; i++) {
     try {
       var settings = getInventorySettings_(uniqueManageNumbers[i], authHeader);
-      if (settings) {
+      // 429 エラーの場合はリトライ
+      if (settings === 429) {
+        Logger.log('[searchItemsWithLTJson_] 429 rate limit, retrying after 2000ms...');
+        Utilities.sleep(2000);
+        settings = getInventorySettings_(uniqueManageNumbers[i], authHeader);
+      }
+      if (settings && settings !== 429) {
         settingsMap[uniqueManageNumbers[i]] = settings;
       }
       if (i < uniqueManageNumbers.length - 1) {
-        Utilities.sleep(200);
+        Utilities.sleep(1100);
       }
     } catch (e) {
       Logger.log('[searchItemsWithLTJson_] error for ' + uniqueManageNumbers[i] + ': ' + e.message);
@@ -534,6 +540,9 @@ function getInventorySettings_(manageNumber, authHeader) {
       var data = JSON.parse(response.getContentText());
       Logger.log('[getInventorySettings_] variants keys=' + Object.keys(data.variants || {}).join(','));
       return data;
+    } else if (status === 429) {
+      Logger.log('[getInventorySettings_] 429 rate limited');
+      return 429;
     } else {
       Logger.log('[getInventorySettings_] error: ' + response.getContentText().substring(0, 300));
       return null;
