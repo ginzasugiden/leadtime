@@ -626,6 +626,11 @@ function doBulkSearch() {
       if (data.error) { showStatus(bulkStatus, 'error', data.error); return; }
       bulkItems = data.items || [];
       if (bulkItems.length === 0) { showStatus(bulkStatus, 'info', '検索結果なし'); return; }
+      bulkItems.forEach(function(item, i) {
+        console.log('item[' + i + '] manageNumber=' + item.manageNumber +
+          ' normalLT=' + item.normalDeliveryDateId +
+          ' backorderLT=' + item.backOrderDeliveryDateId);
+      });
       showStatus(bulkStatus, 'info', bulkItems.length + '件の商品を取得しました');
       renderLtSearchResults(bulkItems, ltList);
     })
