@@ -338,14 +338,19 @@ function getLeadTimeListJson_(authHeader) {
     var item = list[i];
     results.push({
       id: item.getChildText('operationLeadTimeId'),
-      delvdateNumber: item.getChildText('delvdateNumber'),
       name: item.getChildText('name'),
       days: item.getChildText('numberOfDays'),
       inStockFlag: item.getChildText('inStockDefaultFlag'),
       outOfStockFlag: item.getChildText('outOfStockDefaultFlag')
     });
   }
-  Logger.log('[getLeadTimeListJson_] first result: ' + JSON.stringify(results[0]));
+
+  // operationLeadTimeId 昇順ソートし、1始まりの連番(delvdateNumber)を振る
+  results.sort(function(a, b) { return Number(a.id) - Number(b.id); });
+  for (var i = 0; i < results.length; i++) {
+    results[i].delvdateNumber = i + 1;
+  }
+  Logger.log('[getLeadTimeListJson_] results: ' + JSON.stringify(results));
   return { leadTimeList: results };
 }
 

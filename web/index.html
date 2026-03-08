@@ -641,12 +641,15 @@ function doBulkSearch() {
 }
 
 function buildLtSelect(name, list, currentValue) {
+  // delvdateNumber を value に使う（normalDeliveryDateId と一致する連番）
+  // data-original にも delvdateNumber を保存
   var html = '<select name="' + name + '" data-original="' + (currentValue || '') + '" style="font-size:0.9em;">';
   html += '<option value="">-- 未設定 --</option>';
   for (var i = 0; i < list.length; i++) {
     var lt = list[i];
-    var selected = (currentValue != null && currentValue !== '' && Number(lt.id) === Number(currentValue)) ? ' selected' : '';
-    html += '<option value="' + lt.id + '"' + selected + '>' + lt.name + '</option>';
+    var val = lt.delvdateNumber || lt.id;
+    var selected = (currentValue != null && currentValue !== '' && Number(val) === Number(currentValue)) ? ' selected' : '';
+    html += '<option value="' + val + '"' + selected + '>' + lt.name + '</option>';
   }
   html += '</select>';
   return html;
