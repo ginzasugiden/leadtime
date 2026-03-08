@@ -315,22 +315,37 @@ function getLeadTimeListJson_(authHeader) {
     return { error: 'API失敗: ' + respCode, detail: response.getContentText() };
   }
 
-  var root = XmlService.parse(response.getContentText()).getRootElement();
+  var rawText = response.getContentText();
+  Logger.log('[getLeadTimeListJson_] raw response=' + rawText.substring(0, 500));
+
+  var root = XmlService.parse(rawText).getRootElement();
   var list = root.getChild('result')
                  .getChild('operationLeadTimeList')
                  .getChildren('operationLeadTime');
+
+  // 最初の要素の全子要素名をログ出力（フィールド特定用）
+  if (list.length > 0) {
+    var children = list[0].getChildren();
+    var childNames = [];
+    for (var c = 0; c < children.length; c++) {
+      childNames.push(children[c].getName() + '=' + children[c].getText());
+    }
+    Logger.log('[getLeadTimeListJson_] first item children: ' + childNames.join(', '));
+  }
 
   var results = [];
   for (var i = 0; i < list.length; i++) {
     var item = list[i];
     results.push({
       id: item.getChildText('operationLeadTimeId'),
+      delvdateNumber: item.getChildText('delvdateNumber'),
       name: item.getChildText('name'),
       days: item.getChildText('numberOfDays'),
       inStockFlag: item.getChildText('inStockDefaultFlag'),
       outOfStockFlag: item.getChildText('outOfStockDefaultFlag')
     });
   }
+  Logger.log('[getLeadTimeListJson_] first result: ' + JSON.stringify(results[0]));
   return { leadTimeList: results };
 }
 
