@@ -1,107 +1,131 @@
 /**
- * Web API エントリポイント（認証機能内蔵）
+ * Web API エントリポイント（認証機能内蔵・GasAuthライブラリ不要）
  * GitHub Pages から doGet (JSONP) で呼び出す
  */
-
-// ── 認証設定 ──
-var AUTH_SHEET_ID = '1iYeV2SbOVoRH8Qjm2d1w5tWmhlE_zcc-yO1tDSLN7Rk';
-var AUTH_SHEET_NAME = 'api_key';
-var SESSION_TTL = 7200; // 2時間（秒）
 
 // ────────────────────────────────────────
 // 認証・セッション管理
 // ────────────────────────────────────────
 
 /**
- * スプレッドシートで id + pw を照合
- * @returns {{ success:true, userId, sname, sid, email, licenseKey, serviceSecret } | { success:false, message }}
+ * BASE64値を安全にデコードする
+ * "BASE64:" プレフィックスがあれば除去してからデコード
+ * デコード失敗時は元の値をそのまま返す
  */
-function getUserFromSheet_(userId, password) {
-  Logger.log('[getUserFromSheet_] start: userId=' + userId);
-  var ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
-  var sheet = ss.getSheetByName(AUTH_SHEET_NAME);
-  var data = sheet.getDataRange().getValues();
-  Logger.log('[getUserFromSheet_] sheet rows=' + data.length);
-
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    if (String(row[0]) !== userId) continue;
-    Logger.log('[getUserFromSheet_] found userId at row ' + (i + 1));
-
-    // flag=0 のみ有効
-    var flag = String(row[9]);
-    Logger.log('[getUserFromSheet_] flag=' + flag);
-    if (flag !== '0') {
-      Logger.log('[getUserFromSheet_] rejected: flag is not 0');
-      return { success: false, message: 'このアカウントは無効です' };
-    }
-
-    // 有効期限チェック
-    var expiry = row[10];
-    Logger.log('[getUserFromSheet_] expiry=' + expiry);
-    if (expiry) {
-      if (new Date(expiry) <= new Date()) {
-        Logger.log('[getUserFromSheet_] rejected: expired');
-        return { success: false, message: 'アカウントの有効期限が切れています' };
-      }
-    }
-
-    // パスワード照合（「BASE64:」プレフィックスを除去してデコード）
-    var pwRaw = String(row[5]);
-    Logger.log('[getUserFromSheet_] pwRaw prefix=' + pwRaw.substring(0, 10) + '...');
-    if (pwRaw.indexOf('BASE64:') === 0) pwRaw = pwRaw.substring(7);
-    var decoded = Utilities.newBlob(Utilities.base64Decode(pwRaw)).getDataAsString();
-    Logger.log('[getUserFromSheet_] pw match=' + (decoded === password));
-    if (decoded !== password) {
-      return { success: false, message: 'ログインIDまたはパスワードが違います' };
-    }
-
-    Logger.log('[getUserFromSheet_] success: sname=' + String(row[7]));
-    return {
-      success: true,
-      userId: String(row[0]),
-      licenseKey: String(row[2]),
-      serviceSecret: String(row[3]),
-      sid: String(row[6]),
-      sname: String(row[7]),
-      email: String(row[8])
-    };
+function safeBase64Decode_(value) {
+  if (!value) return '';
+  var raw = String(value);
+  if (raw.indexOf('BASE64:') === 0) {
+    raw = raw.substring(7);
   }
-
-  Logger.log('[getUserFromSheet_] userId not found');
-  return { success: false, message: 'ログインIDまたはパスワードが違います' };
+  try {
+    return Utilities.newBlob(Utilities.base64Decode(raw)).getDataAsString();
+  } catch (e) {
+    Logger.log('[safeBase64Decode_] failed: ' + e.message + ' raw prefix=' + raw.substring(0, 10));
+    return raw;
+  }
 }
 
 /**
- * セッショントークンを生成・CacheServiceに保存
+ * スプレッドシートの api_key タブからユーザー情報を取得
+ * @param {string} userId - A列のid
+ * @param {string} password - 平文パスワード
+ * @returns {object|null} ユーザー情報 or null
+ */
+function getUserFromSheet_(userId, password) {
+  var SHEET_ID = '1iYeV2SbOVoRH8Qjm2d1w5tWmhlE_zcc-yO1tDSLN7Rk';
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = ss.getSheetByName('api_key');
+  var data = sheet.getDataRange().getValues();
+
+  Logger.log('[getUserFromSheet_] rows=' + data.length);
+
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var rowId = String(row[0]).trim(); // A列: id
+
+    if (rowId !== userId) continue;
+
+    Logger.log('[getUserFromSheet_] found userId at row ' + (i + 1));
+
+    // flag チェック（J列 = index 9）
+    var flag = row[9];
+    Logger.log('[getUserFromSheet_] flag=' + flag);
+    if (flag == 1) return null;
+
+    // expiry チェック（K列 = index 10）
+    var expiry = row[10];
+    if (expiry) {
+      var expiryDate = new Date(expiry);
+      if (expiryDate < new Date()) {
+        Logger.log('[getUserFromSheet_] expired: ' + expiryDate);
+        return null;
+      }
+    }
+
+    // パスワード照合（F列 = index 5）
+    var storedPw = safeBase64Decode_(row[5]);
+    Logger.log('[getUserFromSheet_] pw match=' + (storedPw === password));
+
+    if (storedPw !== password) return null;
+
+    // ユーザー情報を返却（licenseKey / serviceSecret は RAW のまま返す）
+    var result = {
+      id: rowId,
+      licenseKey: String(row[2]),      // C列: BASE64のまま
+      serviceSecret: String(row[3]),   // D列: BASE64のまま
+      sid: String(row[6]),             // G列: 店舗ID
+      sname: String(row[7]),           // H列: 店舗名
+      email: String(row[8]),           // I列
+      role: String(row[11])            // L列
+    };
+
+    Logger.log('[getUserFromSheet_] success: sname=' + result.sname);
+    return result;
+  }
+
+  Logger.log('[getUserFromSheet_] user not found: ' + userId);
+  return null;
+}
+
+/**
+ * セッション作成
  * @returns {string} token
  */
-function createSession_(userId, licenseKey, serviceSecret) {
+function createSession_(userId, userData) {
   var token = Utilities.getUuid();
-  Logger.log('[createSession_] userId=' + userId + ' token=' + token);
   var cache = CacheService.getScriptCache();
-  cache.put('session_' + token, JSON.stringify({
+  var sessionData = JSON.stringify({
     userId: userId,
-    licenseKey: licenseKey,
-    serviceSecret: serviceSecret
-  }), SESSION_TTL);
+    licenseKey: userData.licenseKey,       // BASE64のまま保存
+    serviceSecret: userData.serviceSecret, // BASE64のまま保存
+    sid: userData.sid,
+    sname: userData.sname,
+    email: userData.email,
+    role: userData.role,
+    created: new Date().toISOString()
+  });
+  cache.put('session_' + token, sessionData, 3600);
+  Logger.log('[createSession_] userId=' + userId + ' token=' + token);
   return token;
 }
 
 /**
- * トークンからセッション情報を取得
- * @returns {{ userId, licenseKey, serviceSecret } | null}
+ * セッション検証
+ * @returns {object|null} セッションデータ or null
  */
 function validateSession_(token) {
-  Logger.log('[validateSession_] token=' + (token ? token.substring(0, 8) + '...' : 'empty'));
   if (!token) return null;
+  Logger.log('[validateSession_] token=' + token.substring(0, 8) + '...');
   var cache = CacheService.getScriptCache();
   var data = cache.get('session_' + token);
-  Logger.log('[validateSession_] cache hit=' + !!data);
-  if (!data) return null;
-  var parsed = JSON.parse(data);
-  Logger.log('[validateSession_] userId=' + parsed.userId);
-  return parsed;
+  if (!data) {
+    Logger.log('[validateSession_] not found');
+    return null;
+  }
+  var session = JSON.parse(data);
+  Logger.log('[validateSession_] userId=' + session.userId);
+  return session;
 }
 
 /**
@@ -111,6 +135,24 @@ function deleteSession_(token) {
   if (!token) return;
   var cache = CacheService.getScriptCache();
   cache.remove('session_' + token);
+  Logger.log('[deleteSession_] removed');
+}
+
+/**
+ * 楽天RMS API用の ESA 認証ヘッダーを生成
+ * セッションから licenseKey / serviceSecret を取得し、デコードしてヘッダーを作る
+ * @param {object} session - validateSession_ の戻り値
+ * @returns {string} "ESA xxxx" 形式のヘッダー値
+ */
+function buildEsaAuthHeader_(session) {
+  var lk = safeBase64Decode_(session.licenseKey);
+  var ss = safeBase64Decode_(session.serviceSecret);
+  Logger.log('[buildEsaAuthHeader_] lk length=' + lk.length + ' ss length=' + ss.length);
+  Logger.log('[buildEsaAuthHeader_] lk prefix=' + lk.substring(0, 4) + '...');
+  Logger.log('[buildEsaAuthHeader_] ss prefix=' + ss.substring(0, 4) + '...');
+  var authHeader = 'ESA ' + Utilities.base64Encode(ss + ':' + lk);
+  Logger.log('[buildEsaAuthHeader_] header prefix=' + authHeader.substring(0, 15) + '...');
+  return authHeader;
 }
 
 // ────────────────────────────────────────
@@ -177,13 +219,13 @@ function handleAction_(action, params, callback) {
       if (!userId || !password) {
         return resp_({ error: 'userId と password は必須です' });
       }
-      var result = getUserFromSheet_(userId, password);
-      Logger.log('[handleAction_] login result: success=' + result.success);
-      if (!result.success) {
-        return resp_({ error: result.message });
+      var user = getUserFromSheet_(userId, password);
+      if (!user) {
+        Logger.log('[handleAction_] login failed');
+        return resp_({ error: 'ログインIDまたはパスワードが違います' });
       }
-      var token = createSession_(result.userId, result.licenseKey, result.serviceSecret);
-      return resp_({ token: token, sname: result.sname });
+      var token = createSession_(userId, user);
+      return resp_({ token: token, sname: user.sname });
     }
 
     // ── 認証不要: ログアウト ──
@@ -196,14 +238,16 @@ function handleAction_(action, params, callback) {
 
     // ── 認証必要なアクション ──
     var token = (params && params.token) || '';
-    var creds = validateSession_(token);
-    if (!creds) {
+    var session = validateSession_(token);
+    if (!session) {
       Logger.log('[handleAction_] auth failed: token=' + (token ? token.substring(0, 8) + '...' : 'empty'));
       return resp_({ error: 'セッションが無効です。再ログインしてください。', status: 401 });
     }
-    Logger.log('[handleAction_] authenticated: userId=' + creds.userId);
+    Logger.log('[handleAction_] authenticated: userId=' + session.userId);
 
-    var authHeader = 'ESA ' + Utilities.base64Encode(creds.serviceSecret + ':' + creds.licenseKey);
+    Logger.log('[handleAction_] calling buildEsaAuthHeader_...');
+    var authHeader = buildEsaAuthHeader_(session);
+    Logger.log('[handleAction_] authHeader generated, length=' + authHeader.length);
 
     switch (action) {
 
@@ -218,6 +262,14 @@ function handleAction_(action, params, callback) {
           return resp_({ error: 'keyword は必須です' });
         }
         return resp_(searchItemsJson_(keyword, authHeader));
+
+      case 'searchItemsWithLT':
+        var kwLT = (params && params.keyword) || '';
+        Logger.log('[handleAction_] searchItemsWithLT: keyword=' + kwLT);
+        if (!kwLT) {
+          return resp_({ error: 'keyword は必須です' });
+        }
+        return resp_(searchItemsWithLTJson_(kwLT, authHeader));
 
       case 'updateLeadTime':
         var items = (params && params.items) || [];
@@ -283,78 +335,282 @@ function getLeadTimeListJson_(authHeader) {
 }
 
 /**
+ * 商品検索 + 各商品の現在のLT設定を取得して返す
+ */
+function searchItemsWithLTJson_(keyword, authHeader) {
+  var searchResult = searchItemsJson_(keyword, authHeader);
+  var items = searchResult.items || [];
+
+  // manageNumber の重複を排除（同一商品の複数variant対応）
+  var seen = {};
+  var uniqueManageNumbers = [];
+  for (var i = 0; i < items.length; i++) {
+    if (!seen[items[i].manageNumber]) {
+      seen[items[i].manageNumber] = true;
+      uniqueManageNumbers.push(items[i].manageNumber);
+    }
+  }
+
+  Logger.log('[searchItemsWithLTJson_] unique manageNumbers=' + uniqueManageNumbers.length);
+
+  // 各商品のLT設定を取得
+  var settingsMap = {};
+  for (var i = 0; i < uniqueManageNumbers.length; i++) {
+    try {
+      var settings = getInventorySettings_(uniqueManageNumbers[i], authHeader);
+      if (settings) {
+        settingsMap[uniqueManageNumbers[i]] = settings;
+      }
+      if (i < uniqueManageNumbers.length - 1) {
+        Utilities.sleep(200);
+      }
+    } catch (e) {
+      Logger.log('[searchItemsWithLTJson_] error for ' + uniqueManageNumbers[i] + ': ' + e.message);
+    }
+  }
+
+  // 商品情報 + LT設定をマージ
+  var itemsWithLT = [];
+  for (var i = 0; i < uniqueManageNumbers.length; i++) {
+    var mn = uniqueManageNumbers[i];
+    var settings = settingsMap[mn];
+    // items から title を取得
+    var title = '';
+    for (var k = 0; k < items.length; k++) {
+      if (items[k].manageNumber === mn) { title = items[k].title; break; }
+    }
+
+    if (settings && settings.variants) {
+      var variantKeys = Object.keys(settings.variants);
+      for (var j = 0; j < variantKeys.length; j++) {
+        var vId = variantKeys[j];
+        var variant = settings.variants[vId];
+        itemsWithLT.push({
+          manageNumber: mn,
+          title: title,
+          variantId: vId,
+          normalDeliveryDateId: variant.normalDeliveryDateId || null,
+          backOrderDeliveryDateId: variant.backOrderDeliveryDateId || null,
+          backOrderFlag: variant.backOrderFlag || false
+        });
+      }
+    } else {
+      itemsWithLT.push({
+        manageNumber: mn,
+        title: title,
+        variantId: '',
+        normalDeliveryDateId: null,
+        backOrderDeliveryDateId: null,
+        backOrderFlag: false
+      });
+    }
+  }
+
+  Logger.log('[searchItemsWithLTJson_] total items with LT=' + itemsWithLT.length);
+  return { items: itemsWithLT };
+}
+
+/**
  * 管理番号で検索し、結果を配列で返す
  */
 function searchItemsJson_(keyword, authHeader) {
+  Logger.log('[searchItemsJson_] authHeader length=' + (authHeader ? authHeader.length : 'null'));
   var endpoint = 'https://api.rms.rakuten.co.jp/es/2.0/items/search';
   var results = [];
   var cursorMark = '';
 
   do {
-    var url = endpoint + '?title=' + encodeURIComponent(keyword) + '&hits=100';
+    var url = endpoint + '?manageNumber=' + encodeURIComponent(keyword) + '&hits=100';
     if (cursorMark) {
       url += '&cursorMark=' + encodeURIComponent(cursorMark);
     }
     Logger.log('[searchItemsJson_] url=' + url);
 
-    var resp = UrlFetchApp.fetch(url, {
+    var response = UrlFetchApp.fetch(url, {
       method: 'get',
       headers: {
         'Authorization': authHeader
       },
       muteHttpExceptions: true
     });
-    Logger.log('[searchItemsJson_] status=' + resp.getResponseCode());
-    var json = JSON.parse(resp.getContentText());
-    Logger.log('[searchItemsJson_] numFound=' + (json.numFound || 0));
 
-    if (Array.isArray(json.results)) {
+    var status = response.getResponseCode();
+    Logger.log('[searchItemsJson_] status=' + status);
+
+    if (status !== 200) {
+      Logger.log('[searchItemsJson_] error body=' + response.getContentText().substring(0, 500));
+      break;
+    }
+
+    var responseText = response.getContentText();
+    Logger.log('[searchItemsJson_] raw response (first 500)=' + responseText.substring(0, 500));
+
+    var json = JSON.parse(responseText);
+    var numFound = json.numFound || 0;
+    Logger.log('[searchItemsJson_] numFound=' + numFound);
+
+    // ★ パース: results[].item からデータを取得
+    Logger.log('[searchItemsJson_] json.results exists=' + !!json.results);
+    Logger.log('[searchItemsJson_] json.results.length=' + (json.results ? json.results.length : 0));
+    if (json.results && json.results.length > 0) {
+      Logger.log('[searchItemsJson_] first result keys=' + Object.keys(json.results[0]).join(','));
+      Logger.log('[searchItemsJson_] first result.item exists=' + !!json.results[0].item);
+      if (json.results[0].item) {
+        Logger.log('[searchItemsJson_] first item keys=' + Object.keys(json.results[0].item).join(','));
+        Logger.log('[searchItemsJson_] first item.manageNumber=' + json.results[0].item.manageNumber);
+        Logger.log('[searchItemsJson_] first item.variants type=' + typeof json.results[0].item.variants);
+        Logger.log('[searchItemsJson_] first item.variants=' + JSON.stringify(json.results[0].item.variants).substring(0, 200));
+      }
       for (var i = 0; i < json.results.length; i++) {
-        var p = json.results[i].item;
-        var variants = p.variants || [];
-        for (var j = 0; j < variants.length; j++) {
-          var v = variants[j];
+        var item = json.results[i].item;
+        if (!item) { Logger.log('[searchItemsJson_] result[' + i + '].item is null/undefined'); continue; }
+        var variants = item.variants || {};
+        var variantKeys = Object.keys(variants);
+        Logger.log('[searchItemsJson_] item[' + i + '] manageNumber=' + item.manageNumber + ' variantKeys=' + variantKeys.length);
+        if (variantKeys.length > 0) {
+          for (var j = 0; j < variantKeys.length; j++) {
+            var vid = variantKeys[j];
+            var vdata = variants[vid] || {};
+            results.push({
+              manageNumber: item.manageNumber || '',
+              itemNumber: item.itemNumber || '',
+              variantId: vid,
+              skuId: vdata.merchantDefinedSkuId || '',
+              title: item.title || '',
+              tagline: item.tagline || ''
+            });
+          }
+        } else {
+          // variants がない商品もそのまま追加
           results.push({
-            manageNumber: p.manageNumber || '',
-            itemNumber: p.itemNumber || '',
-            variantId: v.variantId || '',
-            skuId: v.merchantDefinedSkuId || '',
-            title: p.title || '',
-            tagline: p.tagline || ''
+            manageNumber: item.manageNumber || '',
+            itemNumber: item.itemNumber || '',
+            variantId: '',
+            skuId: '',
+            title: item.title || '',
+            tagline: item.tagline || ''
           });
         }
       }
+      Logger.log('[searchItemsJson_] parsed ' + json.results.length + ' items, total=' + results.length);
     }
 
-    if (!json.nextCursorMark || json.nextCursorMark === cursorMark) break;
-    cursorMark = json.nextCursorMark;
-  } while (true);
+    // ページネーション: cursorMark
+    var nextCursorMark = json.nextCursorMark || '';
+    if (nextCursorMark && nextCursorMark !== cursorMark) {
+      cursorMark = nextCursorMark;
+    } else {
+      cursorMark = '';
+    }
 
-  return { items: results };
+  } while (cursorMark && results.length < 1000);
+
+  Logger.log('[searchItemsJson_] total results=' + results.length);
+  return { items: results, numFound: results.length };
 }
 
 /**
- * items配列の各要素 { manageNumber, variantId, quantity, leadTimeId } を更新
+ * 商品の在庫関連設定（納期設定含む）を取得
+ * @param {string} manageNumber - 商品管理番号
+ * @param {string} authHeader - ESA認証ヘッダー
+ * @returns {object|null} 設定データ
+ */
+function getInventorySettings_(manageNumber, authHeader) {
+  var url = 'https://api.rms.rakuten.co.jp/es/2.0/items/inventory-related-settings/manage-numbers/' +
+    encodeURIComponent(manageNumber);
+
+  Logger.log('[getInventorySettings_] url=' + url);
+
+  try {
+    var response = UrlFetchApp.fetch(url, {
+      method: 'get',
+      headers: { 'Authorization': authHeader },
+      muteHttpExceptions: true
+    });
+    var status = response.getResponseCode();
+    Logger.log('[getInventorySettings_] status=' + status);
+
+    if (status === 200) {
+      var data = JSON.parse(response.getContentText());
+      Logger.log('[getInventorySettings_] variants keys=' + Object.keys(data.variants || {}).join(','));
+      return data;
+    } else {
+      Logger.log('[getInventorySettings_] error: ' + response.getContentText().substring(0, 300));
+      return null;
+    }
+  } catch (e) {
+    Logger.log('[getInventorySettings_] exception: ' + e.message);
+    return null;
+  }
+}
+
+/**
+ * items配列の各要素を更新
+ * { manageNumber, variantId, normalDeliveryDateId, backOrderDeliveryDateId }
+ * または旧形式 { manageNumber, variantId, leadTimeId }
+ * GET で現在の設定を取得し、指定フィールドだけ差し替えて PUT する
  */
 function updateLeadTimeJson_(items, authHeader) {
   var results = [];
 
   for (var i = 0; i < items.length; i++) {
     var item = items[i];
-    var endpoint = 'https://api.rms.rakuten.co.jp/es/2.1/inventories/manage-numbers/'
-      + item.manageNumber + '/variants/' + item.variantId;
+    var manageNumber = item.manageNumber;
+    var variantId = item.variantId;
 
-    var payload = {
-      mode: 'ABSOLUTE',
-      quantity: Number(item.quantity),
-      operationLeadTime: {
-        normalDeliveryTimeId: Number(item.leadTimeId)
+    Logger.log('[updateLeadTimeJson_] processing ' + manageNumber + ' variant=' + variantId);
+
+    // Step 1: 現在の設定を取得
+    var currentSettings = getInventorySettings_(manageNumber, authHeader);
+
+    if (!currentSettings) {
+      Logger.log('[updateLeadTimeJson_] failed to get current settings for ' + manageNumber);
+      results.push({
+        manageNumber: manageNumber,
+        variantId: variantId,
+        success: false,
+        status: 'GET失敗'
+      });
+      Utilities.sleep(1500);
+      continue;
+    }
+
+    // Step 2: 指定フィールドを変更
+    var variants = currentSettings.variants || {};
+    // 新形式: normalDeliveryDateId / backOrderDeliveryDateId
+    // 旧形式互換: leadTimeId → normalDeliveryDateId
+    var newNormal = item.normalDeliveryDateId != null ? item.normalDeliveryDateId : (item.leadTimeId != null ? item.leadTimeId : null);
+    var newBackOrder = item.backOrderDeliveryDateId != null ? item.backOrderDeliveryDateId : null;
+
+    if (variantId && variants[variantId]) {
+      if (newNormal != null) variants[variantId].normalDeliveryDateId = Number(newNormal);
+      if (newBackOrder != null) variants[variantId].backOrderDeliveryDateId = Number(newBackOrder);
+      Logger.log('[updateLeadTimeJson_] updated variant ' + variantId +
+        ' normal=' + variants[variantId].normalDeliveryDateId +
+        ' backOrder=' + (variants[variantId].backOrderDeliveryDateId || 'none'));
+    } else {
+      var variantKeys = Object.keys(variants);
+      for (var j = 0; j < variantKeys.length; j++) {
+        if (newNormal != null) variants[variantKeys[j]].normalDeliveryDateId = Number(newNormal);
+        if (newBackOrder != null) variants[variantKeys[j]].backOrderDeliveryDateId = Number(newBackOrder);
       }
+    }
+
+    // Step 3: 全データを PUT で送信
+    var payload = {
+      unlimitedInventoryFlag: currentSettings.unlimitedInventoryFlag,
+      features: currentSettings.features,
+      variants: variants
     };
-    Logger.log('[updateLeadTimeJson_] endpoint=' + endpoint + ' payload=' + JSON.stringify(payload));
+
+    var url = 'https://api.rms.rakuten.co.jp/es/2.0/items/inventory-related-settings/manage-numbers/' +
+      encodeURIComponent(manageNumber);
+
+    Logger.log('[updateLeadTimeJson_] PUT url=' + url);
+    Logger.log('[updateLeadTimeJson_] payload variants count=' + Object.keys(variants).length);
 
     try {
-      var response = UrlFetchApp.fetch(endpoint, {
+      var response = UrlFetchApp.fetch(url, {
         method: 'put',
         headers: {
           'Authorization': authHeader,
@@ -365,20 +621,22 @@ function updateLeadTimeJson_(items, authHeader) {
       });
 
       var code = response.getResponseCode();
-      var respBody = response.getContentText();
-      Logger.log('[updateLeadTimeJson_] status=' + code + ' body=' + respBody);
+      var body = response.getContentText();
+      Logger.log('[updateLeadTimeJson_] status=' + code + ' body=' + body.substring(0, 200));
+
       results.push({
-        manageNumber: item.manageNumber,
-        variantId: item.variantId,
-        success: code === 200 || code === 204,
+        manageNumber: manageNumber,
+        variantId: variantId,
+        success: (code === 200 || code === 204),
         status: code
       });
-    } catch (err) {
+    } catch (e) {
+      Logger.log('[updateLeadTimeJson_] exception: ' + e.message);
       results.push({
-        manageNumber: item.manageNumber,
-        variantId: item.variantId,
+        manageNumber: manageNumber,
+        variantId: variantId,
         success: false,
-        error: err.message
+        status: e.message
       });
     }
 

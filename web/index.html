@@ -348,10 +348,6 @@
 
       <div id="bulk-controls" style="display:none; margin-top:1rem;">
         <div class="form-row">
-          <label>適用するリードタイム：</label>
-          <select id="lt-select"></select>
-        </div>
-        <div class="form-row">
           <input type="text" id="bulk-keyword" placeholder="商品管理番号を入力して検索">
           <button class="btn btn-primary" id="btn-bulk-search">検索</button>
         </div>
@@ -361,11 +357,11 @@
           <table>
             <thead>
               <tr>
-                <th><input type="checkbox" id="check-all"></th>
                 <th>管理番号</th>
                 <th>バリエーションID</th>
-                <th>SKU ID</th>
                 <th>商品名</th>
+                <th>在庫あり時LT</th>
+                <th>在庫切れ時LT</th>
               </tr>
             </thead>
             <tbody id="bulk-results"></tbody>
@@ -373,7 +369,7 @@
         </div>
 
         <div class="form-row" style="margin-top:1rem;">
-          <button class="btn btn-gold" id="btn-apply-lt" disabled>選択した商品にLTを適用</button>
+          <button class="btn btn-gold" id="btn-apply-lt" disabled style="display:none;">変更を適用</button>
         </div>
         <div id="apply-status" class="status"></div>
       </div>
@@ -586,7 +582,7 @@ function doSearch() {
 // ── LT一覧取得 ──
 var loadLtBtn = document.getElementById('btn-load-lt');
 var ltStatus = document.getElementById('lt-status');
-var ltSelect = document.getElementById('lt-select');
+var ltList = []; // LT一覧を保持
 
 loadLtBtn.addEventListener('click', function() {
   loadLtBtn.disabled = true;
@@ -596,15 +592,8 @@ loadLtBtn.addEventListener('click', function() {
     .then(function(data) {
       loadLtBtn.disabled = false;
       if (data.error) { showStatus(ltStatus, 'error', data.error); return; }
-      var list = data.leadTimeList || [];
-      ltSelect.innerHTML = '';
-      list.forEach(function(lt) {
-        var opt = document.createElement('option');
-        opt.value = lt.id;
-        opt.textContent = lt.name + ' (' + lt.days + '日)';
-        ltSelect.appendChild(opt);
-      });
-      showStatus(ltStatus, 'info', list.length + '件のリードタイムを取得しました');
+      ltList = data.leadTimeList || [];
+      showStatus(ltStatus, 'info', ltList.length + '件のリードタイムを取得しました');
       document.getElementById('bulk-controls').style.display = '';
     })
     .catch(function(err) {
@@ -613,7 +602,7 @@ loadLtBtn.addEventListener('click', function() {
     });
 });
 
-// ── 一括変更: 商品検索 ──
+// ── 一括変更: 商品検索（LT設定付き） ──
 var bulkSearchBtn = document.getElementById('btn-bulk-search');
 var bulkInput = document.getElementById('bulk-keyword');
 var bulkStatus = document.getElementById('bulk-search-status');
@@ -627,31 +616,18 @@ function doBulkSearch() {
   if (!keyword) return;
 
   bulkSearchBtn.disabled = true;
-  showStatus(bulkStatus, 'loading', '検索中...');
+  showStatus(bulkStatus, 'loading', '検索中（LT設定も取得します）...');
   document.getElementById('bulk-table-wrap').style.display = 'none';
+  document.getElementById('btn-apply-lt').style.display = 'none';
 
-  callGas('searchItems', { keyword: keyword })
+  callGas('searchItemsWithLT', { keyword: keyword })
     .then(function(data) {
       bulkSearchBtn.disabled = false;
       if (data.error) { showStatus(bulkStatus, 'error', data.error); return; }
       bulkItems = data.items || [];
       if (bulkItems.length === 0) { showStatus(bulkStatus, 'info', '検索結果なし'); return; }
-      bulkStatus.className = 'status';
-      var tbody = document.getElementById('bulk-results');
-      tbody.innerHTML = '';
-      bulkItems.forEach(function(it, idx) {
-        var tr = document.createElement('tr');
-        tr.innerHTML =
-          '<td><input type="checkbox" class="bulk-check" data-idx="' + idx + '"></td>' +
-          '<td>' + escapeHtml(it.manageNumber) + '</td>' +
-          '<td>' + escapeHtml(it.variantId) + '</td>' +
-          '<td>' + escapeHtml(it.skuId) + '</td>' +
-          '<td>' + escapeHtml(it.title) + '</td>';
-        tbody.appendChild(tr);
-      });
-      document.getElementById('bulk-table-wrap').style.display = '';
-      document.getElementById('btn-apply-lt').disabled = false;
-      document.getElementById('check-all').checked = false;
+      showStatus(bulkStatus, 'info', bulkItems.length + '件の商品を取得しました');
+      renderLtSearchResults(bulkItems, ltList);
     })
     .catch(function(err) {
       bulkSearchBtn.disabled = false;
@@ -659,39 +635,86 @@ function doBulkSearch() {
     });
 }
 
-// 全選択
-document.getElementById('check-all').addEventListener('change', function() {
-  var checked = this.checked;
-  document.querySelectorAll('.bulk-check').forEach(function(cb) { cb.checked = checked; });
+function buildLtSelect(name, list, currentValue) {
+  var html = '<select name="' + name + '" data-original="' + (currentValue || '') + '" style="font-size:0.9em;">';
+  html += '<option value="">-- 未設定 --</option>';
+  for (var i = 0; i < list.length; i++) {
+    var lt = list[i];
+    var selected = (String(lt.id) === String(currentValue)) ? ' selected' : '';
+    html += '<option value="' + lt.id + '"' + selected + '>' + lt.name + '</option>';
+  }
+  html += '</select>';
+  return html;
+}
+
+function renderLtSearchResults(items, list) {
+  var tbody = document.getElementById('bulk-results');
+  tbody.innerHTML = '';
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    var tr = document.createElement('tr');
+    tr.setAttribute('data-manage-number', it.manageNumber);
+    tr.setAttribute('data-variant-id', it.variantId || '');
+    tr.innerHTML =
+      '<td>' + escapeHtml(it.manageNumber) + '</td>' +
+      '<td>' + escapeHtml(it.variantId || '') + '</td>' +
+      '<td>' + escapeHtml((it.title || '').substring(0, 50)) + '</td>' +
+      '<td>' + buildLtSelect('normal-' + i, list, it.normalDeliveryDateId) + '</td>' +
+      '<td>' + buildLtSelect('backorder-' + i, list, it.backOrderDeliveryDateId) + '</td>';
+    tbody.appendChild(tr);
+  }
+  document.getElementById('bulk-table-wrap').style.display = '';
+  document.getElementById('btn-apply-lt').style.display = '';
+  document.getElementById('btn-apply-lt').disabled = false;
+}
+
+// ドロップダウン変更時のハイライト
+document.addEventListener('change', function(e) {
+  if (e.target.tagName === 'SELECT' && e.target.closest('#bulk-table-wrap')) {
+    var original = e.target.getAttribute('data-original');
+    if (e.target.value !== original) {
+      e.target.style.backgroundColor = '#fff3cd';
+    } else {
+      e.target.style.backgroundColor = '';
+    }
+  }
 });
 
-// ── LT適用 ──
+// ── LT適用（変更があった商品のみ） ──
 var applyBtn = document.getElementById('btn-apply-lt');
 var applyStatus = document.getElementById('apply-status');
 
 applyBtn.addEventListener('click', function() {
-  var selectedLtId = ltSelect.value;
-  var checks = document.querySelectorAll('.bulk-check:checked');
-  if (checks.length === 0) {
-    showStatus(applyStatus, 'error', '商品を選択してください');
+  var rows = document.querySelectorAll('#bulk-results tr[data-manage-number]');
+  var changedItems = [];
+
+  rows.forEach(function(row, index) {
+    var manageNumber = row.getAttribute('data-manage-number');
+    var variantId = row.getAttribute('data-variant-id');
+
+    var normalSelect = row.querySelector('select[name="normal-' + index + '"]');
+    var backorderSelect = row.querySelector('select[name="backorder-' + index + '"]');
+
+    var normalChanged = normalSelect && normalSelect.value !== normalSelect.getAttribute('data-original');
+    var backorderChanged = backorderSelect && backorderSelect.value !== backorderSelect.getAttribute('data-original');
+
+    if (normalChanged || backorderChanged) {
+      var item = { manageNumber: manageNumber, variantId: variantId };
+      if (normalChanged) item.normalDeliveryDateId = normalSelect.value ? Number(normalSelect.value) : null;
+      if (backorderChanged) item.backOrderDeliveryDateId = backorderSelect.value ? Number(backorderSelect.value) : null;
+      changedItems.push(item);
+    }
+  });
+
+  if (changedItems.length === 0) {
+    showStatus(applyStatus, 'info', '変更された項目がありません');
     return;
   }
 
-  var items = [];
-  checks.forEach(function(cb) {
-    var it = bulkItems[parseInt(cb.dataset.idx)];
-    items.push({
-      manageNumber: it.manageNumber,
-      variantId: it.variantId,
-      quantity: 9999,
-      leadTimeId: parseInt(selectedLtId)
-    });
-  });
-
   applyBtn.disabled = true;
-  showStatus(applyStatus, 'loading', items.length + '件を更新中...');
+  showStatus(applyStatus, 'loading', changedItems.length + '件を更新中...');
 
-  callGas('updateLeadTime', { items: items })
+  callGas('updateLeadTime', { items: changedItems })
     .then(function(data) {
       applyBtn.disabled = false;
       if (data.error) { showStatus(applyStatus, 'error', data.error); return; }
