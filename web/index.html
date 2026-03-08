@@ -653,6 +653,7 @@ function buildLtSelect(name, list, currentValue) {
 }
 
 function renderLtSearchResults(items, list) {
+  console.log('ltList:', JSON.stringify(list));
   var tbody = document.getElementById('bulk-results');
   tbody.innerHTML = '';
   for (var i = 0; i < items.length; i++) {
