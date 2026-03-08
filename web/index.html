@@ -583,6 +583,7 @@ function doSearch() {
 var loadLtBtn = document.getElementById('btn-load-lt');
 var ltStatus = document.getElementById('lt-status');
 var ltList = []; // LT一覧を保持
+var delvdateList = []; // 納期マスター一覧（ドロップダウン用）
 
 loadLtBtn.addEventListener('click', function() {
   loadLtBtn.disabled = true;
@@ -593,7 +594,11 @@ loadLtBtn.addEventListener('click', function() {
       loadLtBtn.disabled = false;
       if (data.error) { showStatus(ltStatus, 'error', data.error); return; }
       ltList = data.leadTimeList || [];
-      showStatus(ltStatus, 'info', ltList.length + '件のリードタイムを取得しました');
+      delvdateList = data.delvdateMasterList || [];
+      console.log('ltList:', JSON.stringify(ltList));
+      console.log('delvdateList:', JSON.stringify(delvdateList));
+      var count = delvdateList.length || ltList.length;
+      showStatus(ltStatus, 'info', count + '件のリードタイムを取得しました');
       document.getElementById('bulk-controls').style.display = '';
     })
     .catch(function(err) {
@@ -632,7 +637,7 @@ function doBulkSearch() {
           ' backorderLT=' + item.backOrderDeliveryDateId);
       });
       showStatus(bulkStatus, 'info', bulkItems.length + '件の商品を取得しました');
-      renderLtSearchResults(bulkItems, ltList);
+      renderLtSearchResults(bulkItems, delvdateList.length > 0 ? delvdateList : ltList);
     })
     .catch(function(err) {
       bulkSearchBtn.disabled = false;
@@ -641,14 +646,14 @@ function doBulkSearch() {
 }
 
 function buildLtSelect(name, list, currentValue) {
-  // delvdateNumber を value に使う（normalDeliveryDateId と一致する連番）
-  // data-original にも delvdateNumber を保存
+  // list = delvdateMasterList: value=delvdateNumber, 表示=caption
   var html = '<select name="' + name + '" data-original="' + (currentValue || '') + '" style="font-size:0.9em;">';
   html += '<option value="">-- 未設定 --</option>';
   for (var i = 0; i < list.length; i++) {
-    var lt = list[i];
-    var selected = (currentValue != null && currentValue !== '' && Number(lt.delvdateNumber) === Number(currentValue)) ? ' selected' : '';
-    html += '<option value="' + lt.delvdateNumber + '"' + selected + '>' + lt.name + '</option>';
+    var item = list[i];
+    var val = item.delvdateNumber;
+    var selected = (currentValue != null && currentValue !== '' && Number(val) === Number(currentValue)) ? ' selected' : '';
+    html += '<option value="' + val + '"' + selected + '>' + item.caption + '</option>';
   }
   html += '</select>';
   return html;

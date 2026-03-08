@@ -255,6 +255,10 @@ function handleAction_(action, params, callback) {
         Logger.log('[handleAction_] getLeadTimeList');
         return resp_(getLeadTimeListJson_(authHeader));
 
+      case 'getDelvdateMaster':
+        Logger.log('[handleAction_] getDelvdateMaster');
+        return resp_(getDelvdateMasterJson_(authHeader));
+
       case 'searchItems':
         var keyword = (params && params.keyword) || '';
         Logger.log('[handleAction_] searchItems: keyword=' + keyword);
@@ -345,8 +349,75 @@ function getLeadTimeListJson_(authHeader) {
       outOfStockFlag: item.getChildText('outOfStockDefaultFlag')
     });
   }
+  // delvdateMaster を取得
+  var delvResults = [];
+  try {
+    var delvUrl = 'https://api.rms.rakuten.co.jp/es/1.0/shop/delvdateMaster';
+    Logger.log('[getLeadTimeListJson_] fetching delvdateMaster...');
+    var delvResp = UrlFetchApp.fetch(delvUrl, {
+      method: 'get',
+      headers: {
+        'Authorization': authHeader,
+        'Content-Type': 'application/xml; charset=UTF-8'
+      },
+      muteHttpExceptions: true
+    });
+    var delvStatus = delvResp.getResponseCode();
+    Logger.log('[delvdateMaster] status=' + delvStatus);
+
+    if (delvStatus === 200) {
+      var delvBody = delvResp.getContentText();
+      Logger.log('[delvdateMaster] raw=' + delvBody.substring(0, 2000));
+      var delvRoot = XmlService.parse(delvBody).getRootElement();
+      var delvList = delvRoot.getChild('result')
+                             .getChild('delvdateMasterList')
+                             .getChildren('delvdateMaster');
+
+      // 最初の要素の子要素名をログ出力
+      if (delvList.length > 0) {
+        var delvChildren = delvList[0].getChildren();
+        var delvChildNames = [];
+        for (var d = 0; d < delvChildren.length; d++) {
+          delvChildNames.push(delvChildren[d].getName() + '=' + delvChildren[d].getText());
+        }
+        Logger.log('[delvdateMaster] first item children: ' + delvChildNames.join(', '));
+      }
+
+      for (var i = 0; i < delvList.length; i++) {
+        var delv = delvList[i];
+        delvResults.push({
+          delvdateNumber: delv.getChildText('delvdateNumber'),
+          caption: delv.getChildText('caption') || delv.getChildText('name') || ''
+        });
+      }
+      Logger.log('[delvdateMaster] parsed ' + delvResults.length + ' items');
+    }
+  } catch (e) {
+    Logger.log('[delvdateMaster] error: ' + e.message);
+  }
+
   Logger.log('[getLeadTimeListJson_] results: ' + JSON.stringify(results));
-  return { leadTimeList: results };
+  return { leadTimeList: results, delvdateMasterList: delvResults };
+}
+
+/**
+ * 納期マスター取得（ShopAPI）
+ */
+function getDelvdateMasterJson_(authHeader) {
+  var url = 'https://api.rms.rakuten.co.jp/es/1.0/shop/delvdateMaster';
+  Logger.log('[getDelvdateMasterJson_] url=' + url);
+
+  var response = UrlFetchApp.fetch(url, {
+    method: 'get',
+    headers: { 'Authorization': authHeader },
+    muteHttpExceptions: true
+  });
+  var status = response.getResponseCode();
+  var body = response.getContentText();
+  Logger.log('[getDelvdateMasterJson_] status=' + status);
+  Logger.log('[getDelvdateMasterJson_] raw response (first 1000)=' + body.substring(0, 1000));
+
+  return { status: status, body: body };
 }
 
 /**
