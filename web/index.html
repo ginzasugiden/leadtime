@@ -647,9 +647,8 @@ function buildLtSelect(name, list, currentValue) {
   html += '<option value="">-- 未設定 --</option>';
   for (var i = 0; i < list.length; i++) {
     var lt = list[i];
-    var val = lt.delvdateNumber || lt.id;
-    var selected = (currentValue != null && currentValue !== '' && Number(val) === Number(currentValue)) ? ' selected' : '';
-    html += '<option value="' + val + '"' + selected + '>' + lt.name + '</option>';
+    var selected = (currentValue != null && currentValue !== '' && Number(lt.delvdateNumber) === Number(currentValue)) ? ' selected' : '';
+    html += '<option value="' + lt.delvdateNumber + '"' + selected + '>' + lt.name + '</option>';
   }
   html += '</select>';
   return html;
