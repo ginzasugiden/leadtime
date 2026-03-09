@@ -255,10 +255,6 @@ function handleAction_(action, params, callback) {
         Logger.log('[handleAction_] getLeadTimeList');
         return resp_(getLeadTimeListJson_(authHeader));
 
-      case 'getDelvdateMaster':
-        Logger.log('[handleAction_] getDelvdateMaster');
-        return resp_(getDelvdateMasterJson_(authHeader));
-
       case 'searchItems':
         var keyword = (params && params.keyword) || '';
         Logger.log('[handleAction_] searchItems: keyword=' + keyword);
@@ -342,62 +338,15 @@ function getLeadTimeListJson_(authHeader) {
     var item = list[i];
     results.push({
       id: item.getChildText('operationLeadTimeId'),
-      delvdateNumber: i + 1,
       name: item.getChildText('name'),
       days: item.getChildText('numberOfDays'),
       inStockFlag: item.getChildText('inStockDefaultFlag'),
       outOfStockFlag: item.getChildText('outOfStockDefaultFlag')
     });
   }
-  // delvdateMaster を取得
-  var delvResults = [];
-  try {
-    var delvUrl = 'https://api.rms.rakuten.co.jp/es/1.0/shop/delvdateMaster';
-    Logger.log('[getLeadTimeListJson_] fetching delvdateMaster...');
-    var delvResp = UrlFetchApp.fetch(delvUrl, {
-      method: 'get',
-      headers: {
-        'Authorization': authHeader,
-        'Content-Type': 'application/xml; charset=UTF-8'
-      },
-      muteHttpExceptions: true
-    });
-    var delvStatus = delvResp.getResponseCode();
-    Logger.log('[delvdateMaster] status=' + delvStatus);
-
-    if (delvStatus === 200) {
-      var delvBody = delvResp.getContentText();
-      Logger.log('[delvdateMaster] raw=' + delvBody.substring(0, 2000));
-      var delvRoot = XmlService.parse(delvBody).getRootElement();
-      var delvList = delvRoot.getChild('result')
-                             .getChild('delvdateMasterList')
-                             .getChildren('delvdateMaster');
-
-      // 最初の要素の子要素名をログ出力
-      if (delvList.length > 0) {
-        var delvChildren = delvList[0].getChildren();
-        var delvChildNames = [];
-        for (var d = 0; d < delvChildren.length; d++) {
-          delvChildNames.push(delvChildren[d].getName() + '=' + delvChildren[d].getText());
-        }
-        Logger.log('[delvdateMaster] first item children: ' + delvChildNames.join(', '));
-      }
-
-      for (var i = 0; i < delvList.length; i++) {
-        var delv = delvList[i];
-        delvResults.push({
-          delvdateNumber: delv.getChildText('delvdateNumber'),
-          caption: delv.getChildText('caption') || delv.getChildText('name') || ''
-        });
-      }
-      Logger.log('[delvdateMaster] parsed ' + delvResults.length + ' items');
-    }
-  } catch (e) {
-    Logger.log('[delvdateMaster] error: ' + e.message);
-  }
 
   Logger.log('[getLeadTimeListJson_] results: ' + JSON.stringify(results));
-  return { leadTimeList: results, delvdateMasterList: delvResults };
+  return { leadTimeList: results };
 }
 
 /**
@@ -421,80 +370,86 @@ function getDelvdateMasterJson_(authHeader) {
 }
 
 /**
- * 商品検索 + 各商品の現在のLT設定を取得して返す
+ * inventories API で商品のリードタイム情報を取得
+ * Sheet版の fetchLeadTime() と同じAPI
+ *
+ * @param {string} manageNumber - 商品管理番号
+ * @param {string} variantId - バリエーションID
+ * @param {string} authHeader - ESA認証ヘッダー
+ * @returns {object} { normalDeliveryTimeId, backOrderDeliveryTimeId, quantity }
+ */
+function fetchInventoryLT_(manageNumber, variantId, authHeader) {
+  var url = 'https://api.rms.rakuten.co.jp/es/2.1/inventories/manage-numbers/' +
+    encodeURIComponent(manageNumber) + '/variants/' + encodeURIComponent(variantId);
+
+  Logger.log('[fetchInventoryLT_] url=' + url);
+
+  var options = {
+    'method': 'get',
+    'headers': {
+      'Authorization': authHeader
+    },
+    'muteHttpExceptions': true
+  };
+
+  try {
+    var response = UrlFetchApp.fetch(url, options);
+    var status = response.getResponseCode();
+    Logger.log('[fetchInventoryLT_] status=' + status);
+
+    if (status === 200) {
+      var json = JSON.parse(response.getContentText());
+      var result = {
+        quantity: json.quantity || 0,
+        normalDeliveryTimeId: null,
+        backOrderDeliveryTimeId: null
+      };
+
+      if (json.operationLeadTime) {
+        result.normalDeliveryTimeId = json.operationLeadTime.normalDeliveryTimeId || null;
+        result.backOrderDeliveryTimeId = json.operationLeadTime.backOrderDeliveryTimeId || null;
+      }
+
+      Logger.log('[fetchInventoryLT_] normalDeliveryTimeId=' + result.normalDeliveryTimeId +
+        ' backOrderDeliveryTimeId=' + result.backOrderDeliveryTimeId);
+      return result;
+    } else {
+      Logger.log('[fetchInventoryLT_] error: ' + response.getContentText().substring(0, 200));
+      return { quantity: 0, normalDeliveryTimeId: null, backOrderDeliveryTimeId: null };
+    }
+  } catch (e) {
+    Logger.log('[fetchInventoryLT_] exception: ' + e.message);
+    return { quantity: 0, normalDeliveryTimeId: null, backOrderDeliveryTimeId: null };
+  }
+}
+
+/**
+ * 商品検索 + 各商品の現在のLT設定を inventories API で取得して返す
  */
 function searchItemsWithLTJson_(keyword, authHeader) {
   var searchResult = searchItemsJson_(keyword, authHeader);
   var items = searchResult.items || [];
 
-  // manageNumber の重複を排除（同一商品の複数variant対応）
-  var seen = {};
-  var uniqueManageNumbers = [];
-  for (var i = 0; i < items.length; i++) {
-    if (!seen[items[i].manageNumber]) {
-      seen[items[i].manageNumber] = true;
-      uniqueManageNumbers.push(items[i].manageNumber);
-    }
-  }
-
-  Logger.log('[searchItemsWithLTJson_] unique manageNumbers=' + uniqueManageNumbers.length);
-
-  // 各商品のLT設定を取得
-  var settingsMap = {};
-  for (var i = 0; i < uniqueManageNumbers.length; i++) {
-    try {
-      var settings = getInventorySettings_(uniqueManageNumbers[i], authHeader);
-      // 429 エラーの場合はリトライ
-      if (settings === 429) {
-        Logger.log('[searchItemsWithLTJson_] 429 rate limit, retrying after 2000ms...');
-        Utilities.sleep(2000);
-        settings = getInventorySettings_(uniqueManageNumbers[i], authHeader);
-      }
-      if (settings && settings !== 429) {
-        settingsMap[uniqueManageNumbers[i]] = settings;
-      }
-      if (i < uniqueManageNumbers.length - 1) {
-        Utilities.sleep(1100);
-      }
-    } catch (e) {
-      Logger.log('[searchItemsWithLTJson_] error for ' + uniqueManageNumbers[i] + ': ' + e.message);
-    }
-  }
-
-  // 商品情報 + LT設定をマージ
+  // 各商品のLT設定を inventories API で取得
   var itemsWithLT = [];
-  for (var i = 0; i < uniqueManageNumbers.length; i++) {
-    var mn = uniqueManageNumbers[i];
-    var settings = settingsMap[mn];
-    // items から title を取得
-    var title = '';
-    for (var k = 0; k < items.length; k++) {
-      if (items[k].manageNumber === mn) { title = items[k].title; break; }
-    }
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
 
-    if (settings && settings.variants) {
-      var variantKeys = Object.keys(settings.variants);
-      for (var j = 0; j < variantKeys.length; j++) {
-        var vId = variantKeys[j];
-        var variant = settings.variants[vId];
-        itemsWithLT.push({
-          manageNumber: mn,
-          title: title,
-          variantId: vId,
-          normalDeliveryDateId: variant.normalDeliveryDateId || null,
-          backOrderDeliveryDateId: variant.backOrderDeliveryDateId || null,
-          backOrderFlag: variant.backOrderFlag || false
-        });
-      }
-    } else {
-      itemsWithLT.push({
-        manageNumber: mn,
-        title: title,
-        variantId: '',
-        normalDeliveryDateId: null,
-        backOrderDeliveryDateId: null,
-        backOrderFlag: false
-      });
+    // fetchInventoryLT_ で在庫・LT情報取得
+    var ltInfo = fetchInventoryLT_(item.manageNumber, item.variantId, authHeader);
+
+    itemsWithLT.push({
+      manageNumber: item.manageNumber,
+      title: item.title,
+      variantId: item.variantId,
+      normalDeliveryTimeId: ltInfo.normalDeliveryTimeId,
+      backOrderDeliveryTimeId: ltInfo.backOrderDeliveryTimeId,
+      quantity: ltInfo.quantity
+    });
+
+    // レート制限対策: 800ms待機（Sheet版と同じ）
+    if (i < items.length - 1) {
+      Utilities.sleep(800);
     }
   }
 

@@ -582,8 +582,7 @@ function doSearch() {
 // ── LT一覧取得 ──
 var loadLtBtn = document.getElementById('btn-load-lt');
 var ltStatus = document.getElementById('lt-status');
-var ltList = []; // LT一覧を保持
-var delvdateList = []; // 納期マスター一覧（ドロップダウン用）
+var ltList = []; // LT一覧を保持（operationLeadTimeId体系）
 
 loadLtBtn.addEventListener('click', function() {
   loadLtBtn.disabled = true;
@@ -594,11 +593,8 @@ loadLtBtn.addEventListener('click', function() {
       loadLtBtn.disabled = false;
       if (data.error) { showStatus(ltStatus, 'error', data.error); return; }
       ltList = data.leadTimeList || [];
-      delvdateList = data.delvdateMasterList || [];
       console.log('ltList:', JSON.stringify(ltList));
-      console.log('delvdateList:', JSON.stringify(delvdateList));
-      var count = delvdateList.length || ltList.length;
-      showStatus(ltStatus, 'info', count + '件のリードタイムを取得しました');
+      showStatus(ltStatus, 'info', ltList.length + '件のリードタイムを取得しました');
       document.getElementById('bulk-controls').style.display = '';
     })
     .catch(function(err) {
@@ -633,11 +629,11 @@ function doBulkSearch() {
       if (bulkItems.length === 0) { showStatus(bulkStatus, 'info', '検索結果なし'); return; }
       bulkItems.forEach(function(item, i) {
         console.log('item[' + i + '] manageNumber=' + item.manageNumber +
-          ' normalLT=' + item.normalDeliveryDateId +
-          ' backorderLT=' + item.backOrderDeliveryDateId);
+          ' normalLT=' + item.normalDeliveryTimeId +
+          ' backorderLT=' + item.backOrderDeliveryTimeId);
       });
       showStatus(bulkStatus, 'info', bulkItems.length + '件の商品を取得しました');
-      renderLtSearchResults(bulkItems, delvdateList.length > 0 ? delvdateList : ltList);
+      renderLtSearchResults(bulkItems, ltList);
     })
     .catch(function(err) {
       bulkSearchBtn.disabled = false;
@@ -646,14 +642,14 @@ function doBulkSearch() {
 }
 
 function buildLtSelect(name, list, currentValue) {
-  // list = delvdateMasterList: value=delvdateNumber, 表示=caption
+  // list = operationLeadTime一覧: value=id (operationLeadTimeId), 表示=name
   var html = '<select name="' + name + '" data-original="' + (currentValue || '') + '" style="font-size:0.9em;">';
   html += '<option value="">-- 未設定 --</option>';
   for (var i = 0; i < list.length; i++) {
-    var item = list[i];
-    var val = item.delvdateNumber;
-    var selected = (currentValue != null && currentValue !== '' && Number(val) === Number(currentValue)) ? ' selected' : '';
-    html += '<option value="' + val + '"' + selected + '>' + item.caption + '</option>';
+    var lt = list[i];
+    var selected = (currentValue != null && currentValue !== '' &&
+      String(lt.id) === String(currentValue)) ? ' selected' : '';
+    html += '<option value="' + lt.id + '"' + selected + '>' + lt.name + '</option>';
   }
   html += '</select>';
   return html;
@@ -672,8 +668,8 @@ function renderLtSearchResults(items, list) {
       '<td>' + escapeHtml(it.manageNumber) + '</td>' +
       '<td>' + escapeHtml(it.variantId || '') + '</td>' +
       '<td>' + escapeHtml((it.title || '').substring(0, 50)) + '</td>' +
-      '<td>' + buildLtSelect('normal-' + i, list, it.normalDeliveryDateId) + '</td>' +
-      '<td>' + buildLtSelect('backorder-' + i, list, it.backOrderDeliveryDateId) + '</td>';
+      '<td>' + buildLtSelect('normal-' + i, list, it.normalDeliveryTimeId) + '</td>' +
+      '<td>' + buildLtSelect('backorder-' + i, list, it.backOrderDeliveryTimeId) + '</td>';
     tbody.appendChild(tr);
   }
   document.getElementById('bulk-table-wrap').style.display = '';
