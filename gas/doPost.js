@@ -350,26 +350,6 @@ function getLeadTimeListJson_(authHeader) {
 }
 
 /**
- * 納期マスター取得（ShopAPI）
- */
-function getDelvdateMasterJson_(authHeader) {
-  var url = 'https://api.rms.rakuten.co.jp/es/1.0/shop/delvdateMaster';
-  Logger.log('[getDelvdateMasterJson_] url=' + url);
-
-  var response = UrlFetchApp.fetch(url, {
-    method: 'get',
-    headers: { 'Authorization': authHeader },
-    muteHttpExceptions: true
-  });
-  var status = response.getResponseCode();
-  var body = response.getContentText();
-  Logger.log('[getDelvdateMasterJson_] status=' + status);
-  Logger.log('[getDelvdateMasterJson_] raw response (first 1000)=' + body.substring(0, 1000));
-
-  return { status: status, body: body };
-}
-
-/**
  * inventories API で商品のリードタイム情報を取得
  * Sheet版の fetchLeadTime() と同じAPI
  *
@@ -557,48 +537,12 @@ function searchItemsJson_(keyword, authHeader) {
 }
 
 /**
- * 商品の在庫関連設定（納期設定含む）を取得
- * @param {string} manageNumber - 商品管理番号
- * @param {string} authHeader - ESA認証ヘッダー
- * @returns {object|null} 設定データ
- */
-function getInventorySettings_(manageNumber, authHeader) {
-  var url = 'https://api.rms.rakuten.co.jp/es/2.0/items/inventory-related-settings/manage-numbers/' +
-    encodeURIComponent(manageNumber);
-
-  Logger.log('[getInventorySettings_] url=' + url);
-
-  try {
-    var response = UrlFetchApp.fetch(url, {
-      method: 'get',
-      headers: { 'Authorization': authHeader },
-      muteHttpExceptions: true
-    });
-    var status = response.getResponseCode();
-    Logger.log('[getInventorySettings_] status=' + status);
-
-    if (status === 200) {
-      var data = JSON.parse(response.getContentText());
-      Logger.log('[getInventorySettings_] variants keys=' + Object.keys(data.variants || {}).join(','));
-      return data;
-    } else if (status === 429) {
-      Logger.log('[getInventorySettings_] 429 rate limited');
-      return 429;
-    } else {
-      Logger.log('[getInventorySettings_] error: ' + response.getContentText().substring(0, 300));
-      return null;
-    }
-  } catch (e) {
-    Logger.log('[getInventorySettings_] exception: ' + e.message);
-    return null;
-  }
-}
-
-/**
- * items配列の各要素を更新
- * { manageNumber, variantId, normalDeliveryDateId, backOrderDeliveryDateId }
- * または旧形式 { manageNumber, variantId, leadTimeId }
- * GET で現在の設定を取得し、指定フィールドだけ差し替えて PUT する
+ * items配列の各要素を inventories API (ES 2.1) で更新
+ * Sheet版 updateInventoryAndLeadTime() と同じAPI
+ * { manageNumber, variantId, normalDeliveryTimeId, backOrderDeliveryTimeId }
+ *
+ * 1. GET で現在の在庫数を取得
+ * 2. PUT で在庫数を維持しつつ operationLeadTime を更新
  */
 function updateLeadTimeJson_(items, authHeader) {
   var results = [];
@@ -610,54 +554,32 @@ function updateLeadTimeJson_(items, authHeader) {
 
     Logger.log('[updateLeadTimeJson_] processing ' + manageNumber + ' variant=' + variantId);
 
-    // Step 1: 現在の設定を取得
-    var currentSettings = getInventorySettings_(manageNumber, authHeader);
+    // Step 1: 現在の在庫情報を取得（在庫数を維持するため）
+    var current = fetchInventoryLT_(manageNumber, variantId, authHeader);
 
-    if (!currentSettings) {
-      Logger.log('[updateLeadTimeJson_] failed to get current settings for ' + manageNumber);
-      results.push({
-        manageNumber: manageNumber,
-        variantId: variantId,
-        success: false,
-        status: 'GET失敗'
-      });
-      Utilities.sleep(1500);
-      continue;
-    }
+    // Step 2: operationLeadTime を組み立て
+    var newNormal = item.normalDeliveryTimeId != null ? item.normalDeliveryTimeId : null;
+    var newBackOrder = item.backOrderDeliveryTimeId != null ? item.backOrderDeliveryTimeId : null;
 
-    // Step 2: 指定フィールドを変更
-    var variants = currentSettings.variants || {};
-    // 新形式: normalDeliveryDateId / backOrderDeliveryDateId
-    // 旧形式互換: leadTimeId → normalDeliveryDateId
-    var newNormal = item.normalDeliveryDateId != null ? item.normalDeliveryDateId : (item.leadTimeId != null ? item.leadTimeId : null);
-    var newBackOrder = item.backOrderDeliveryDateId != null ? item.backOrderDeliveryDateId : null;
+    var operationLeadTime = {};
+    if (newNormal != null) operationLeadTime.normalDeliveryTimeId = Number(newNormal);
+    if (newBackOrder != null) operationLeadTime.backOrderDeliveryTimeId = Number(newBackOrder);
 
-    if (variantId && variants[variantId]) {
-      if (newNormal != null) variants[variantId].normalDeliveryDateId = Number(newNormal);
-      if (newBackOrder != null) variants[variantId].backOrderDeliveryDateId = Number(newBackOrder);
-      Logger.log('[updateLeadTimeJson_] updated variant ' + variantId +
-        ' normal=' + variants[variantId].normalDeliveryDateId +
-        ' backOrder=' + (variants[variantId].backOrderDeliveryDateId || 'none'));
-    } else {
-      var variantKeys = Object.keys(variants);
-      for (var j = 0; j < variantKeys.length; j++) {
-        if (newNormal != null) variants[variantKeys[j]].normalDeliveryDateId = Number(newNormal);
-        if (newBackOrder != null) variants[variantKeys[j]].backOrderDeliveryDateId = Number(newBackOrder);
-      }
-    }
+    Logger.log('[updateLeadTimeJson_] normalDeliveryTimeId=' + (newNormal || 'unchanged') +
+      ' backOrderDeliveryTimeId=' + (newBackOrder || 'unchanged'));
 
-    // Step 3: 全データを PUT で送信
+    // Step 3: inventories API に PUT
+    var url = 'https://api.rms.rakuten.co.jp/es/2.1/inventories/manage-numbers/' +
+      encodeURIComponent(manageNumber) + '/variants/' + encodeURIComponent(variantId);
+
     var payload = {
-      unlimitedInventoryFlag: currentSettings.unlimitedInventoryFlag,
-      features: currentSettings.features,
-      variants: variants
+      mode: 'ABSOLUTE',
+      quantity: current.quantity || 0,
+      operationLeadTime: operationLeadTime
     };
 
-    var url = 'https://api.rms.rakuten.co.jp/es/2.0/items/inventory-related-settings/manage-numbers/' +
-      encodeURIComponent(manageNumber);
-
     Logger.log('[updateLeadTimeJson_] PUT url=' + url);
-    Logger.log('[updateLeadTimeJson_] payload variants count=' + Object.keys(variants).length);
+    Logger.log('[updateLeadTimeJson_] payload=' + JSON.stringify(payload));
 
     try {
       var response = UrlFetchApp.fetch(url, {

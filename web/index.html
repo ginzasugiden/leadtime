@@ -709,8 +709,8 @@ applyBtn.addEventListener('click', function() {
 
     if (normalChanged || backorderChanged) {
       var item = { manageNumber: manageNumber, variantId: variantId };
-      if (normalChanged) item.normalDeliveryDateId = normalSelect.value ? Number(normalSelect.value) : null;
-      if (backorderChanged) item.backOrderDeliveryDateId = backorderSelect.value ? Number(backorderSelect.value) : null;
+      if (normalChanged) item.normalDeliveryTimeId = normalSelect.value ? Number(normalSelect.value) : null;
+      if (backorderChanged) item.backOrderDeliveryTimeId = backorderSelect.value ? Number(backorderSelect.value) : null;
       changedItems.push(item);
     }
   });
