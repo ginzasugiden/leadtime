@@ -353,7 +353,6 @@
 
   <!-- スケジュールタブ -->
   <div id="tab-schedule" class="tab-content">
-    <div class="card">
     <!-- グループ管理セクション -->
     <div class="card" style="margin-bottom:1.5rem;">
       <h2>商品グループ管理</h2>
@@ -391,6 +390,7 @@
         <button class="btn btn-primary" id="btn-group-add">＋ グループ作成</button>
       </div>
     </div>
+    <div class="card">
       <h2>自動更新スケジュール</h2>
       <div id="sched-status" class="status"></div>
 
@@ -1057,7 +1057,6 @@ function deleteSchedule(index) {
 
 // ── 商品グループ管理 ──
 var groups = [];
-var WEEKDAY_NAMES_G = ['日曜','月曜','火曜','水曜','木曜','金曜','土曜'];
 
 function loadGroups() {
   callGas('getGroups')
