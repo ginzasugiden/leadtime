@@ -296,6 +296,22 @@ function handleAction_(action, params, callback) {
         return resp_(deleteSchedule_(session, delIndex));
       }
 
+      case 'getGroups': {
+        return resp_(getGroups_(session));
+      }
+
+      case 'saveGroup': {
+        var grp = params.group ? (typeof params.group === 'string' ? JSON.parse(params.group) : params.group) : null;
+        if (!grp) return resp_({ error: 'group は必須です' });
+        return resp_(saveGroup_(session, grp));
+      }
+
+      case 'deleteGroup': {
+        var grpIndex = params.index != null ? Number(params.index) : -1;
+        if (grpIndex < 0) return resp_({ error: 'index は必須です' });
+        return resp_(deleteGroup_(session, grpIndex));
+      }
+
       default:
         return resp_({ error: '不明な action: ' + action });
     }
@@ -713,5 +729,74 @@ function deleteSchedule_(session, index) {
   }
   sheet.deleteRow(index + 1);
   Logger.log('[deleteSchedule_] deleted row=' + (index + 1));
+  return { success: true };
+}
+
+// ────────────────────────────────────────
+// 商品グループ CRUD
+// 商品グループシート列: A=groupName B=sid C=manageNumbers(カンマ区切り)
+// ────────────────────────────────────────
+
+var GROUP_SHEET_NAME_ = '商品グループ';
+
+function getGroupSheet_() {
+  var ss = SpreadsheetApp.openById(SCHED_SHEET_ID_);
+  return ss.getSheetByName(GROUP_SHEET_NAME_);
+}
+
+function getGroups_(session) {
+  var sheet = getGroupSheet_();
+  if (!sheet) return { groups: [] };
+  var data = sheet.getDataRange().getValues();
+  var groups = [];
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    if (String(row[1]).trim() !== session.sid) continue;
+    var nums = String(row[2]).split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+    groups.push({
+      index:         i,
+      groupName:     String(row[0]).trim(),
+      sid:           String(row[1]).trim(),
+      manageNumbers: nums
+    });
+  }
+  Logger.log('[getGroups_] sid=' + session.sid + ' count=' + groups.length);
+  return { groups: groups };
+}
+
+function saveGroup_(session, grp) {
+  var sheet = getGroupSheet_();
+  if (!sheet) return { error: '商品グループシートが見つかりません' };
+  if (!grp.groupName) return { error: 'groupName は必須です' };
+
+  var nums = Array.isArray(grp.manageNumbers)
+    ? grp.manageNumbers
+    : String(grp.manageNumbers || '').split(/[,\s\n]+/).map(function(s){ return s.trim(); }).filter(Boolean);
+
+  var row = [grp.groupName, session.sid, nums.join(',')];
+
+  if (grp.index && grp.index > 0) {
+    var existing = sheet.getRange(grp.index + 1, 2, 1, 1).getValue();
+    if (String(existing).trim() !== session.sid) {
+      return { error: '他店舗のグループは編集できません' };
+    }
+    sheet.getRange(grp.index + 1, 1, 1, 3).setValues([row]);
+    Logger.log('[saveGroup_] updated row=' + (grp.index + 1));
+  } else {
+    sheet.appendRow(row);
+    Logger.log('[saveGroup_] appended: ' + grp.groupName);
+  }
+  return { success: true };
+}
+
+function deleteGroup_(session, index) {
+  var sheet = getGroupSheet_();
+  if (!sheet) return { error: '商品グループシートが見つかりません' };
+  var existing = sheet.getRange(index + 1, 2, 1, 1).getValue();
+  if (String(existing).trim() !== session.sid) {
+    return { error: '他店舗のグループは削除できません' };
+  }
+  sheet.deleteRow(index + 1);
+  Logger.log('[deleteGroup_] deleted row=' + (index + 1));
   return { success: true };
 }
