@@ -338,8 +338,12 @@
               <tbody id="lt-results"></tbody>
             </table>
           </div>
-          <div class="form-row" style="margin-top:1rem;">
+          <div class="form-row" style="margin-top:1rem; gap:0.5rem; flex-wrap:wrap;">
             <button class="btn btn-gold" id="btn-apply" disabled>選択した商品を更新</button>
+            <button class="btn" id="btn-add-to-group" disabled
+              style="background:#e8f4e8;color:#2d5a2d;border:1px solid #2d5a2d;padding:0.5rem 1rem;">
+              チェック商品をグループに追加
+            </button>
           </div>
           <div id="apply-status" class="status"></div>
         </div>
@@ -350,6 +354,43 @@
   <!-- スケジュールタブ -->
   <div id="tab-schedule" class="tab-content">
     <div class="card">
+    <!-- グループ管理セクション -->
+    <div class="card" style="margin-bottom:1.5rem;">
+      <h2>商品グループ管理</h2>
+      <div id="group-status" class="status"></div>
+
+      <div id="group-list-wrap" style="display:none;">
+        <div id="group-list"></div>
+      </div>
+
+      <div id="group-form-card" style="display:none;margin-top:1rem;padding:1rem;background:#f5f3ee;border-radius:6px;">
+        <h2 id="group-form-title" style="font-size:1rem;margin-bottom:0.8rem;">グループ作成</h2>
+        <input type="hidden" id="group-edit-index" value="">
+        <div class="form-row">
+          <label>グループ名</label>
+          <input type="text" id="group-name-input" placeholder="例: 母の日商品" style="max-width:220px;">
+        </div>
+        <div class="form-row" style="align-items:flex-start;">
+          <label style="padding-top:0.4rem;">管理番号</label>
+          <div style="flex:1;">
+            <textarea id="group-manage-numbers" rows="6"
+              placeholder="改行・カンマ・スペース区切りで複数入力可&#10;例:&#10;yellowrose100&#10;yellowrose88, carpediem20"
+              style="width:100%;font-size:0.9rem;padding:0.4rem;border:1px solid #ccc;border-radius:4px;resize:vertical;box-sizing:border-box;"></textarea>
+            <div style="font-size:0.8rem;color:#888;margin-top:0.3rem;" id="group-count-label"></div>
+          </div>
+        </div>
+        <div id="group-from-lt-preview" style="display:none;margin:0.5rem 0;padding:0.5rem;background:#e8f4e8;border-radius:4px;font-size:0.85rem;"></div>
+        <div class="form-row" style="margin-top:0.8rem;">
+          <button class="btn btn-primary" id="btn-group-save">保存</button>
+          <button class="btn" id="btn-group-cancel" style="background:#e8e5dc;margin-left:0.5rem;">キャンセル</button>
+        </div>
+        <div id="group-save-status" class="status"></div>
+      </div>
+
+      <div class="form-row" style="margin-top:1rem;">
+        <button class="btn btn-primary" id="btn-group-add">＋ グループ作成</button>
+      </div>
+    </div>
       <h2>自動更新スケジュール</h2>
       <div id="sched-status" class="status"></div>
 
@@ -375,8 +416,22 @@
         <input type="hidden" id="sched-edit-index" value="">
 
         <div class="form-row">
+          <label>対象</label>
+          <select id="sched-target-type" style="min-width:120px;">
+            <option value="single">商品1件</option>
+            <option value="group">グループ</option>
+          </select>
+        </div>
+        <div id="sched-single-row" class="form-row">
           <label>管理番号</label>
           <input type="text" id="sched-manage-number" placeholder="例: yellowrose100" style="max-width:220px;">
+        </div>
+        <div id="sched-group-row" class="form-row" style="display:none;">
+          <label>グループ</label>
+          <select id="sched-group-select" style="min-width:180px;">
+            <option value="">-- グループを選択 --</option>
+          </select>
+          <span id="sched-group-count" style="font-size:0.8rem;color:#888;margin-left:0.5rem;align-self:center;"></span>
         </div>
         <div class="form-row">
           <label>タイミング</label>
@@ -503,6 +558,9 @@ function showApp() {
   document.getElementById('app').style.display = 'block';
   document.getElementById('shop-name').textContent = sessionStorage.getItem('sname') || '';
   loadLtList();
+  callGas('getGroups').then(function(data) {
+    if (!data.error) { groups = data.groups || []; updateSchedGroupSelect(); }
+  });
 }
 
 // ── Init: check session ──
@@ -744,7 +802,10 @@ document.getElementById('sched-timing').addEventListener('change', function() {
 // タブ切替時にスケジュール読み込み
 document.querySelectorAll('.tab-btn').forEach(function(btn) {
   btn.addEventListener('click', function() {
-    if (btn.dataset.tab === 'schedule') loadSchedules();
+    if (btn.dataset.tab === 'schedule') {
+      loadGroups();
+      loadSchedules();
+    }
   });
 });
 
@@ -867,7 +928,18 @@ function populateSchedLtSelect(currentName) {
 
 // 保存ボタン
 document.getElementById('btn-sched-save').addEventListener('click', function() {
-  var manageNumber = document.getElementById('sched-manage-number').value.trim();
+  var targetType   = document.getElementById('sched-target-type').value;
+  var manageNumber = '';
+  var groupIndex   = null;
+
+  if (targetType === 'group') {
+    groupIndex = document.getElementById('sched-group-select').value;
+    if (!groupIndex) { showStatus(document.getElementById('sched-save-status'), 'error', 'グループを選択してください'); return; }
+  } else {
+    manageNumber = document.getElementById('sched-manage-number').value.trim();
+    if (!manageNumber) { showStatus(document.getElementById('sched-save-status'), 'error', '管理番号を入力してください'); return; }
+  }
+
   var timing   = document.getElementById('sched-timing').value;
   var weekday  = Number(document.getElementById('sched-weekday').value);
   var month    = Number(document.getElementById('sched-month').value) || '';
@@ -876,22 +948,23 @@ document.getElementById('btn-sched-save').addEventListener('click', function() {
   var ltName   = document.getElementById('sched-lt-name').value;
   var editIndex = document.getElementById('sched-edit-index').value;
 
-  if (!manageNumber) { showStatus(document.getElementById('sched-save-status'), 'error', '管理番号を入力してください'); return; }
   if (timing === 'yearly' && (!month || !date)) { showStatus(document.getElementById('sched-save-status'), 'error', '月・日を入力してください'); return; }
 
-  // 重複チェック
-  var conflicts = checkConflicts(manageNumber, timing, weekday, month, date, hour, editIndex ? Number(editIndex) : null);
-  showConflictAlert(conflicts);
-  if (conflicts.length > 0 && !document.getElementById('sched-confirm-flag')) {
-    var flag = document.createElement('span');
-    flag.id = 'sched-confirm-flag';
-    flag.style.display = 'none';
-    document.getElementById('btn-sched-save').appendChild(flag);
-    showStatus(document.getElementById('sched-save-status'), 'info', '重複を確認の上、もう一度「保存」を押すと保存します');
-    return;
+  // 重複チェック（単件のみ）
+  if (targetType !== 'group') {
+    var conflicts = checkConflicts(manageNumber, timing, weekday, month, date, hour, editIndex ? Number(editIndex) : null);
+    showConflictAlert(conflicts);
+    if (conflicts.length > 0 && !document.getElementById('sched-confirm-flag')) {
+      var flag = document.createElement('span');
+      flag.id = 'sched-confirm-flag';
+      flag.style.display = 'none';
+      document.getElementById('btn-sched-save').appendChild(flag);
+      showStatus(document.getElementById('sched-save-status'), 'info', '重複を確認の上、もう一度「保存」を押すと保存します');
+      return;
+    }
+    var flag = document.getElementById('sched-confirm-flag');
+    if (flag) flag.parentNode.removeChild(flag);
   }
-  var flag = document.getElementById('sched-confirm-flag');
-  if (flag) flag.parentNode.removeChild(flag);
 
   var sched = {
     index: editIndex ? Number(editIndex) : null,
@@ -904,22 +977,53 @@ document.getElementById('btn-sched-save').addEventListener('click', function() {
     ltName: ltName
   };
 
-  document.getElementById('btn-sched-save').disabled = true;
-  showStatus(document.getElementById('sched-save-status'), 'loading', '保存中...');
+  var applyBtn2 = document.getElementById('btn-sched-save');
+  applyBtn2.disabled = true;
 
-  callGas('saveSchedule', { schedule: JSON.stringify(sched) })
-    .then(function(data) {
-      document.getElementById('btn-sched-save').disabled = false;
-      if (data.error) { showStatus(document.getElementById('sched-save-status'), 'error', data.error); return; }
-      document.getElementById('sched-form-card').style.display = 'none';
-      document.getElementById('sched-conflict-alert').style.display = 'none';
-      document.getElementById('sched-save-status').className = 'status';
-      loadSchedules();
-    })
-    .catch(function(err) {
-      document.getElementById('btn-sched-save').disabled = false;
-      showStatus(document.getElementById('sched-save-status'), 'error', '通信エラー: ' + err.message);
+  if (targetType === 'group') {
+    var selGroup = groups.find(function(g) { return String(g.index) === groupIndex; });
+    showStatus(document.getElementById('sched-save-status'), 'loading',
+      selGroup.manageNumbers.length + '件を登録中...');
+    var promises = selGroup.manageNumbers.map(function(mn) {
+      return callGas('saveSchedule', { schedule: JSON.stringify({
+        index: null, manageNumber: mn,
+        timing: timing,
+        weekday: timing === 'weekly' ? weekday : '',
+        month:   timing === 'yearly' ? month   : '',
+        date:    timing === 'yearly' ? date     : '',
+        hour: hour, ltName: ltName
+      })});
     });
+    Promise.all(promises)
+      .then(function(results) {
+        applyBtn2.disabled = false;
+        var errs = results.filter(function(r){ return r.error; });
+        if (errs.length > 0) { showStatus(document.getElementById('sched-save-status'), 'error', errs[0].error); return; }
+        document.getElementById('sched-form-card').style.display = 'none';
+        document.getElementById('sched-conflict-alert').style.display = 'none';
+        document.getElementById('sched-save-status').className = 'status';
+        loadSchedules();
+      })
+      .catch(function(err) {
+        applyBtn2.disabled = false;
+        showStatus(document.getElementById('sched-save-status'), 'error', '通信エラー: ' + err.message);
+      });
+  } else {
+    showStatus(document.getElementById('sched-save-status'), 'loading', '保存中...');
+    callGas('saveSchedule', { schedule: JSON.stringify(sched) })
+      .then(function(data) {
+        applyBtn2.disabled = false;
+        if (data.error) { showStatus(document.getElementById('sched-save-status'), 'error', data.error); return; }
+        document.getElementById('sched-form-card').style.display = 'none';
+        document.getElementById('sched-conflict-alert').style.display = 'none';
+        document.getElementById('sched-save-status').className = 'status';
+        loadSchedules();
+      })
+      .catch(function(err) {
+        applyBtn2.disabled = false;
+        showStatus(document.getElementById('sched-save-status'), 'error', '通信エラー: ' + err.message);
+      });
+  }
 });
 
 // キャンセル
@@ -950,6 +1054,188 @@ function deleteSchedule(index) {
       showStatus(document.getElementById('sched-save-status'), 'error', '通信エラー: ' + err.message);
     });
 }
+
+// ── 商品グループ管理 ──
+var groups = [];
+var WEEKDAY_NAMES_G = ['日曜','月曜','火曜','水曜','木曜','金曜','土曜'];
+
+function loadGroups() {
+  callGas('getGroups')
+    .then(function(data) {
+      if (data.error) { showStatus(document.getElementById('group-status'), 'error', data.error); return; }
+      groups = data.groups || [];
+      document.getElementById('group-status').className = 'status';
+      renderGroups(groups);
+      updateSchedGroupSelect();
+    })
+    .catch(function(err) {
+      showStatus(document.getElementById('group-status'), 'error', '通信エラー: ' + err.message);
+    });
+}
+
+function renderGroups(list) {
+  var wrap = document.getElementById('group-list-wrap');
+  var container = document.getElementById('group-list');
+  container.innerHTML = '';
+  if (list.length === 0) {
+    container.innerHTML = '<div style="color:#999;font-size:0.9rem;padding:0.5rem 0;">グループなし</div>';
+    wrap.style.display = '';
+    return;
+  }
+  list.forEach(function(grp) {
+    var div = document.createElement('div');
+    div.style.cssText = 'display:flex;align-items:center;padding:0.6rem 0;border-bottom:1px solid #e0ddd5;gap:0.5rem;flex-wrap:wrap;';
+    div.innerHTML =
+      '<span style="font-weight:bold;min-width:140px;">' + escapeHtml(grp.groupName) + '</span>' +
+      '<span style="color:#888;font-size:0.85rem;flex:1;">' + grp.manageNumbers.length + '件: ' +
+        escapeHtml(grp.manageNumbers.slice(0,5).join(', ')) + (grp.manageNumbers.length > 5 ? ' ...' : '') + '</span>' +
+      '<button class="btn btn-primary" style="padding:0.3rem 0.6rem;font-size:0.8rem;" onclick="editGroup(' + grp.index + ')">編集</button>' +
+      '<button class="btn" style="padding:0.3rem 0.6rem;font-size:0.8rem;background:#f8e8e8;color:#8b2020;" onclick="deleteGroupItem(' + grp.index + ')">削除</button>';
+    container.appendChild(div);
+  });
+  wrap.style.display = '';
+}
+
+function updateSchedGroupSelect() {
+  var sel = document.getElementById('sched-group-select');
+  var current = sel.value;
+  sel.innerHTML = '<option value="">-- グループを選択 --</option>';
+  groups.forEach(function(grp) {
+    var opt = document.createElement('option');
+    opt.value = grp.index;
+    opt.textContent = grp.groupName + ' (' + grp.manageNumbers.length + '件)';
+    if (String(grp.index) === current) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+document.getElementById('sched-group-select').addEventListener('change', function() {
+  var idx = this.value;
+  var grp = groups.find(function(g) { return String(g.index) === idx; });
+  document.getElementById('sched-group-count').textContent = grp ? grp.manageNumbers.join(', ') : '';
+});
+
+document.getElementById('sched-target-type').addEventListener('change', function() {
+  var isGroup = this.value === 'group';
+  document.getElementById('sched-single-row').style.display = isGroup ? 'none' : '';
+  document.getElementById('sched-group-row').style.display  = isGroup ? '' : 'none';
+});
+
+document.getElementById('btn-group-add').addEventListener('click', function() {
+  document.getElementById('group-form-title').textContent = 'グループ作成';
+  document.getElementById('group-edit-index').value = '';
+  document.getElementById('group-name-input').value = '';
+  document.getElementById('group-manage-numbers').value = '';
+  document.getElementById('group-count-label').textContent = '';
+  document.getElementById('group-from-lt-preview').style.display = 'none';
+  document.getElementById('group-save-status').className = 'status';
+  document.getElementById('group-form-card').style.display = '';
+});
+
+document.getElementById('group-manage-numbers').addEventListener('input', function() {
+  var nums = this.value.split(/[,\s\n]+/).map(function(s){ return s.trim(); }).filter(Boolean);
+  document.getElementById('group-count-label').textContent = nums.length + '件入力済み';
+});
+
+function editGroup(index) {
+  var grp = groups.find(function(g) { return g.index === index; });
+  if (!grp) return;
+  document.getElementById('group-form-title').textContent = 'グループ編集';
+  document.getElementById('group-edit-index').value = grp.index;
+  document.getElementById('group-name-input').value = grp.groupName;
+  document.getElementById('group-manage-numbers').value = grp.manageNumbers.join('\n');
+  document.getElementById('group-count-label').textContent = grp.manageNumbers.length + '件入力済み';
+  document.getElementById('group-from-lt-preview').style.display = 'none';
+  document.getElementById('group-save-status').className = 'status';
+  document.getElementById('group-form-card').style.display = '';
+}
+
+document.getElementById('btn-group-save').addEventListener('click', function() {
+  var groupName  = document.getElementById('group-name-input').value.trim();
+  var rawNums    = document.getElementById('group-manage-numbers').value;
+  var editIndex  = document.getElementById('group-edit-index').value;
+  var nums = rawNums.split(/[,\s\n]+/).map(function(s){ return s.trim(); }).filter(Boolean);
+
+  if (!groupName) { showStatus(document.getElementById('group-save-status'), 'error', 'グループ名を入力してください'); return; }
+  if (nums.length === 0) { showStatus(document.getElementById('group-save-status'), 'error', '管理番号を1件以上入力してください'); return; }
+
+  var btn = document.getElementById('btn-group-save');
+  btn.disabled = true;
+  showStatus(document.getElementById('group-save-status'), 'loading', '保存中...');
+
+  callGas('saveGroup', { group: JSON.stringify({
+    index: editIndex ? Number(editIndex) : null,
+    groupName: groupName,
+    manageNumbers: nums
+  })})
+    .then(function(data) {
+      btn.disabled = false;
+      if (data.error) { showStatus(document.getElementById('group-save-status'), 'error', data.error); return; }
+      document.getElementById('group-form-card').style.display = 'none';
+      document.getElementById('group-save-status').className = 'status';
+      loadGroups();
+    })
+    .catch(function(err) {
+      btn.disabled = false;
+      showStatus(document.getElementById('group-save-status'), 'error', '通信エラー: ' + err.message);
+    });
+});
+
+document.getElementById('btn-group-cancel').addEventListener('click', function() {
+  document.getElementById('group-form-card').style.display = 'none';
+  document.getElementById('group-save-status').className = 'status';
+});
+
+function deleteGroupItem(index) {
+  var grp = groups.find(function(g) { return g.index === index; });
+  if (!grp) return;
+  if (!confirm(grp.groupName + '（' + grp.manageNumbers.length + '件）を削除しますか？')) return;
+  showStatus(document.getElementById('group-status'), 'loading', '削除中...');
+  callGas('deleteGroup', { index: index })
+    .then(function(data) {
+      if (data.error) { showStatus(document.getElementById('group-status'), 'error', data.error); return; }
+      document.getElementById('group-status').className = 'status';
+      loadGroups();
+    })
+    .catch(function(err) {
+      showStatus(document.getElementById('group-status'), 'error', '通信エラー: ' + err.message);
+    });
+}
+
+// ── リードタイム変更タブからグループに追加 ──
+document.getElementById('btn-add-to-group').addEventListener('click', function() {
+  var rows = document.querySelectorAll('#lt-results tr[data-manage-number]');
+  var checked = {};
+  rows.forEach(function(row) {
+    var chk = row.querySelector('.row-chk');
+    if (chk && chk.checked) checked[row.getAttribute('data-manage-number')] = true;
+  });
+  var nums = Object.keys(checked);
+  if (nums.length === 0) { alert('商品をチェックしてください'); return; }
+
+  document.querySelector('.tab-btn[data-tab="schedule"]').click();
+  setTimeout(function() {
+    document.getElementById('group-form-title').textContent = 'グループ作成';
+    document.getElementById('group-edit-index').value = '';
+    document.getElementById('group-name-input').value = '';
+    document.getElementById('group-manage-numbers').value = nums.join('\n');
+    document.getElementById('group-count-label').textContent = nums.length + '件入力済み';
+    var preview = document.getElementById('group-from-lt-preview');
+    preview.textContent = 'リードタイム変更タブでチェックした ' + nums.length + '件が入力されています';
+    preview.style.display = '';
+    document.getElementById('group-save-status').className = 'status';
+    document.getElementById('group-form-card').style.display = '';
+  }, 300);
+});
+
+// チェック変化時にグループ追加ボタン活性化
+document.addEventListener('change', function(e) {
+  if (e.target.classList.contains('row-chk')) {
+    var anyChecked = document.querySelectorAll('#lt-results .row-chk:checked').length > 0;
+    var btn = document.getElementById('btn-add-to-group');
+    if (btn) btn.disabled = !anyChecked;
+  }
+});
 </script>
 </body>
 </html>
