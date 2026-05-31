@@ -351,21 +351,82 @@
   <div id="tab-schedule" class="tab-content">
     <div class="card">
       <h2>自動更新スケジュール</h2>
-      <p style="margin-bottom:1rem;color:#666;font-size:.9rem;">定期実行シートに登録された商品に対して、以下のタイミングで自動的にリードタイムが変更されます。</p>
-      <div class="table-wrap">
-        <table class="schedule-table">
+      <div id="sched-status" class="status"></div>
+
+      <!-- スケジュール一覧テーブル -->
+      <div class="table-wrap" id="sched-table-wrap" style="display:none;">
+        <table id="sched-table">
           <thead>
-            <tr><th>タイミング</th><th>曜日 / 日付</th><th>時刻</th><th>設定リードタイム</th></tr>
+            <tr>
+              <th>管理番号</th>
+              <th>タイミング</th>
+              <th>時刻</th>
+              <th>変更後LT</th>
+              <th style="width:5rem;"></th>
+            </tr>
           </thead>
-          <tbody>
-            <tr><td>週次</td><td>木曜日</td><td>13:00</td><td>出荷リードタイム5日</td></tr>
-            <tr><td>週次</td><td>日曜日</td><td>13:00</td><td>出荷リードタイム3日</td></tr>
-            <tr><td>年末</td><td>12月28日</td><td>15:00</td><td>出荷リードタイム10日</td></tr>
-            <tr><td>年始</td><td>1月2日</td><td>13:00</td><td>出荷リードタイム5日</td></tr>
-            <tr><td>年始</td><td>1月4日</td><td>13:00</td><td>出荷リードタイム3日</td></tr>
-          </tbody>
+          <tbody id="sched-results"></tbody>
         </table>
       </div>
+
+      <!-- 追加・編集フォーム -->
+      <div class="card" id="sched-form-card" style="margin-top:1rem;display:none;">
+        <h2 id="sched-form-title">スケジュール追加</h2>
+        <input type="hidden" id="sched-edit-index" value="">
+
+        <div class="form-row">
+          <label>管理番号</label>
+          <input type="text" id="sched-manage-number" placeholder="例: yellowrose100" style="max-width:220px;">
+        </div>
+        <div class="form-row">
+          <label>タイミング</label>
+          <select id="sched-timing" style="min-width:120px;">
+            <option value="weekly">週次</option>
+            <option value="yearly">年次（特定日）</option>
+          </select>
+        </div>
+        <div id="sched-weekly-row" class="form-row">
+          <label>曜日</label>
+          <select id="sched-weekday" style="min-width:100px;">
+            <option value="0">日曜</option>
+            <option value="1">月曜</option>
+            <option value="2">火曜</option>
+            <option value="3">水曜</option>
+            <option value="4">木曜</option>
+            <option value="5">金曜</option>
+            <option value="6">土曜</option>
+          </select>
+        </div>
+        <div id="sched-yearly-row" class="form-row" style="display:none;">
+          <label>月</label>
+          <input type="number" id="sched-month" min="1" max="12" style="width:60px;">
+          <label style="margin-left:0.5rem;">日</label>
+          <input type="number" id="sched-date" min="1" max="31" style="width:60px;">
+        </div>
+        <div class="form-row">
+          <label>時刻</label>
+          <select id="sched-hour" style="min-width:100px;">
+            <!-- 0〜23時 JSで生成 -->
+          </select>
+        </div>
+        <div class="form-row">
+          <label>変更後LT</label>
+          <select id="sched-lt-name" style="min-width:180px;"></select>
+        </div>
+
+        <!-- 重複アラート -->
+        <div id="sched-conflict-alert" style="display:none;margin:0.8rem 0;padding:0.8rem;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;font-size:0.9rem;"></div>
+
+        <div class="form-row" style="margin-top:1rem;">
+          <button class="btn btn-primary" id="btn-sched-save">保存</button>
+          <button class="btn" id="btn-sched-cancel" style="background:#e8e5dc;margin-left:0.5rem;">キャンセル</button>
+        </div>
+      </div>
+
+      <div class="form-row" style="margin-top:1rem;">
+        <button class="btn btn-primary" id="btn-sched-add">＋ スケジュール追加</button>
+      </div>
+      <div id="sched-save-status" class="status"></div>
     </div>
   </div>
 
@@ -657,6 +718,238 @@ document.getElementById('btn-apply').addEventListener('click', function() {
       showStatus(document.getElementById('apply-status'), 'error', '通信エラー: ' + err.message);
     });
 });
+
+// ── スケジュールタブ ──
+var schedules = [];
+var WEEKDAY_NAMES = ['日曜', '月曜', '火曜', '水曜', '木曜', '金曜', '土曜'];
+
+// 時刻セレクト初期化
+(function() {
+  var sel = document.getElementById('sched-hour');
+  for (var h = 0; h < 24; h++) {
+    var opt = document.createElement('option');
+    opt.value = h;
+    opt.textContent = h + ':00';
+    sel.appendChild(opt);
+  }
+})();
+
+// タイミング切替
+document.getElementById('sched-timing').addEventListener('change', function() {
+  var isYearly = this.value === 'yearly';
+  document.getElementById('sched-weekly-row').style.display = isYearly ? 'none' : '';
+  document.getElementById('sched-yearly-row').style.display = isYearly ? '' : 'none';
+});
+
+// タブ切替時にスケジュール読み込み
+document.querySelectorAll('.tab-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    if (btn.dataset.tab === 'schedule') loadSchedules();
+  });
+});
+
+function loadSchedules() {
+  showStatus(document.getElementById('sched-status'), 'loading', 'スケジュールを読み込み中...');
+  callGas('getSchedules')
+    .then(function(data) {
+      if (data.error) { showStatus(document.getElementById('sched-status'), 'error', data.error); return; }
+      schedules = data.schedules || [];
+      document.getElementById('sched-status').className = 'status';
+      renderSchedules(schedules);
+    })
+    .catch(function(err) {
+      showStatus(document.getElementById('sched-status'), 'error', '通信エラー: ' + err.message);
+    });
+}
+
+function renderSchedules(list) {
+  var tbody = document.getElementById('sched-results');
+  tbody.innerHTML = '';
+  if (list.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#999;">スケジュールなし</td></tr>';
+    document.getElementById('sched-table-wrap').style.display = '';
+    return;
+  }
+  list.forEach(function(sc) {
+    var timingLabel = sc.timing === 'weekly'
+      ? '毎週' + WEEKDAY_NAMES[sc.weekday]
+      : sc.month + '月' + sc.date + '日';
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + escapeHtml(sc.manageNumber) + '</td>' +
+      '<td>' + escapeHtml(timingLabel) + '</td>' +
+      '<td>' + sc.hour + ':00</td>' +
+      '<td>' + escapeHtml(sc.ltName) + '</td>' +
+      '<td>' +
+        '<button class="btn btn-primary" style="padding:0.3rem 0.6rem;font-size:0.8rem;margin-right:4px;" onclick="editSchedule(' + sc.index + ')">編集</button>' +
+        '<button class="btn" style="padding:0.3rem 0.6rem;font-size:0.8rem;background:#f8e8e8;color:#8b2020;" onclick="deleteSchedule(' + sc.index + ')">削除</button>' +
+      '</td>';
+    tbody.appendChild(tr);
+  });
+  document.getElementById('sched-table-wrap').style.display = '';
+}
+
+// 重複チェック
+function checkConflicts(manageNumber, timing, weekday, month, date, hour, excludeIndex) {
+  var conflicts = [];
+  schedules.forEach(function(sc) {
+    if (sc.index === excludeIndex) return;
+    if (sc.manageNumber !== manageNumber) return;
+    var sameTime = false;
+    if (sc.timing === 'weekly' && timing === 'weekly' && sc.weekday === weekday && sc.hour === hour) sameTime = true;
+    if (sc.timing === 'yearly' && timing === 'yearly' && sc.month === month && sc.date === date && sc.hour === hour) sameTime = true;
+    if (sameTime) conflicts.push(sc);
+  });
+  return conflicts;
+}
+
+function showConflictAlert(conflicts) {
+  var el = document.getElementById('sched-conflict-alert');
+  if (conflicts.length === 0) { el.style.display = 'none'; return; }
+  var msg = '⚠️ 以下の設定と重複があります。続けてよいですか？<br>';
+  conflicts.forEach(function(sc) {
+    var t = sc.timing === 'weekly' ? '毎週' + WEEKDAY_NAMES[sc.weekday] : sc.month + '月' + sc.date + '日';
+    msg += '<br>・' + escapeHtml(sc.manageNumber) + ' / ' + t + ' ' + sc.hour + ':00 → ' + escapeHtml(sc.ltName);
+  });
+  el.innerHTML = msg;
+  el.style.display = '';
+}
+
+// 追加ボタン
+document.getElementById('btn-sched-add').addEventListener('click', function() {
+  document.getElementById('sched-form-title').textContent = 'スケジュール追加';
+  document.getElementById('sched-edit-index').value = '';
+  document.getElementById('sched-manage-number').value = '';
+  document.getElementById('sched-timing').value = 'weekly';
+  document.getElementById('sched-weekday').value = '0';
+  document.getElementById('sched-month').value = '';
+  document.getElementById('sched-date').value = '';
+  document.getElementById('sched-hour').value = '13';
+  document.getElementById('sched-weekly-row').style.display = '';
+  document.getElementById('sched-yearly-row').style.display = 'none';
+  document.getElementById('sched-conflict-alert').style.display = 'none';
+  populateSchedLtSelect('');
+  document.getElementById('sched-form-card').style.display = '';
+  document.getElementById('sched-save-status').className = 'status';
+});
+
+function editSchedule(index) {
+  var sc = schedules.find(function(s) { return s.index === index; });
+  if (!sc) return;
+  document.getElementById('sched-form-title').textContent = 'スケジュール編集';
+  document.getElementById('sched-edit-index').value = sc.index;
+  document.getElementById('sched-manage-number').value = sc.manageNumber;
+  document.getElementById('sched-timing').value = sc.timing;
+  document.getElementById('sched-weekday').value = sc.weekday;
+  document.getElementById('sched-month').value = sc.month || '';
+  document.getElementById('sched-date').value = sc.date || '';
+  document.getElementById('sched-hour').value = sc.hour;
+  var isYearly = sc.timing === 'yearly';
+  document.getElementById('sched-weekly-row').style.display = isYearly ? 'none' : '';
+  document.getElementById('sched-yearly-row').style.display = isYearly ? '' : 'none';
+  document.getElementById('sched-conflict-alert').style.display = 'none';
+  populateSchedLtSelect(sc.ltName);
+  document.getElementById('sched-form-card').style.display = '';
+  document.getElementById('sched-save-status').className = 'status';
+}
+
+function populateSchedLtSelect(currentName) {
+  var sel = document.getElementById('sched-lt-name');
+  sel.innerHTML = '';
+  ltList.forEach(function(lt) {
+    var opt = document.createElement('option');
+    opt.value = lt.name;
+    opt.textContent = lt.name;
+    if (lt.name === currentName) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+// 保存ボタン
+document.getElementById('btn-sched-save').addEventListener('click', function() {
+  var manageNumber = document.getElementById('sched-manage-number').value.trim();
+  var timing   = document.getElementById('sched-timing').value;
+  var weekday  = Number(document.getElementById('sched-weekday').value);
+  var month    = Number(document.getElementById('sched-month').value) || '';
+  var date     = Number(document.getElementById('sched-date').value) || '';
+  var hour     = Number(document.getElementById('sched-hour').value);
+  var ltName   = document.getElementById('sched-lt-name').value;
+  var editIndex = document.getElementById('sched-edit-index').value;
+
+  if (!manageNumber) { showStatus(document.getElementById('sched-save-status'), 'error', '管理番号を入力してください'); return; }
+  if (timing === 'yearly' && (!month || !date)) { showStatus(document.getElementById('sched-save-status'), 'error', '月・日を入力してください'); return; }
+
+  // 重複チェック
+  var conflicts = checkConflicts(manageNumber, timing, weekday, month, date, hour, editIndex ? Number(editIndex) : null);
+  showConflictAlert(conflicts);
+  if (conflicts.length > 0 && !document.getElementById('sched-confirm-flag')) {
+    var flag = document.createElement('span');
+    flag.id = 'sched-confirm-flag';
+    flag.style.display = 'none';
+    document.getElementById('btn-sched-save').appendChild(flag);
+    showStatus(document.getElementById('sched-save-status'), 'info', '重複を確認の上、もう一度「保存」を押すと保存します');
+    return;
+  }
+  var flag = document.getElementById('sched-confirm-flag');
+  if (flag) flag.parentNode.removeChild(flag);
+
+  var sched = {
+    index: editIndex ? Number(editIndex) : null,
+    manageNumber: manageNumber,
+    timing: timing,
+    weekday: timing === 'weekly' ? weekday : '',
+    month: timing === 'yearly' ? month : '',
+    date: timing === 'yearly' ? date : '',
+    hour: hour,
+    ltName: ltName
+  };
+
+  document.getElementById('btn-sched-save').disabled = true;
+  showStatus(document.getElementById('sched-save-status'), 'loading', '保存中...');
+
+  callGas('saveSchedule', { schedule: JSON.stringify(sched) })
+    .then(function(data) {
+      document.getElementById('btn-sched-save').disabled = false;
+      if (data.error) { showStatus(document.getElementById('sched-save-status'), 'error', data.error); return; }
+      document.getElementById('sched-form-card').style.display = 'none';
+      document.getElementById('sched-conflict-alert').style.display = 'none';
+      document.getElementById('sched-save-status').className = 'status';
+      loadSchedules();
+    })
+    .catch(function(err) {
+      document.getElementById('btn-sched-save').disabled = false;
+      showStatus(document.getElementById('sched-save-status'), 'error', '通信エラー: ' + err.message);
+    });
+});
+
+// キャンセル
+document.getElementById('btn-sched-cancel').addEventListener('click', function() {
+  document.getElementById('sched-form-card').style.display = 'none';
+  document.getElementById('sched-conflict-alert').style.display = 'none';
+  document.getElementById('sched-save-status').className = 'status';
+  var flag = document.getElementById('sched-confirm-flag');
+  if (flag) flag.parentNode.removeChild(flag);
+});
+
+// 削除
+function deleteSchedule(index) {
+  var sc = schedules.find(function(s) { return s.index === index; });
+  if (!sc) return;
+  var timingLabel = sc.timing === 'weekly'
+    ? '毎週' + WEEKDAY_NAMES[sc.weekday] : sc.month + '月' + sc.date + '日';
+  if (!confirm(sc.manageNumber + ' / ' + timingLabel + ' ' + sc.hour + ':00\nこのスケジュールを削除しますか？')) return;
+
+  showStatus(document.getElementById('sched-save-status'), 'loading', '削除中...');
+  callGas('deleteSchedule', { index: index })
+    .then(function(data) {
+      if (data.error) { showStatus(document.getElementById('sched-save-status'), 'error', data.error); return; }
+      document.getElementById('sched-save-status').className = 'status';
+      loadSchedules();
+    })
+    .catch(function(err) {
+      showStatus(document.getElementById('sched-save-status'), 'error', '通信エラー: ' + err.message);
+    });
+}
 </script>
 </body>
 </html>
