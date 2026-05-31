@@ -279,6 +279,23 @@ function handleAction_(action, params, callback) {
         }
         return resp_(updateLeadTimeJson_(items, authHeader));
 
+      case 'getSchedules': {
+        return resp_(getSchedules_(session));
+      }
+
+      case 'saveSchedule': {
+        // params.schedule = { index, sid, manageNumber, timing, weekday, month, date, hour, ltName }
+        var sched = params.schedule ? (typeof params.schedule === 'string' ? JSON.parse(params.schedule) : params.schedule) : null;
+        if (!sched) return resp_({ error: 'schedule は必須です' });
+        return resp_(saveSchedule_(session, sched));
+      }
+
+      case 'deleteSchedule': {
+        var delIndex = params.index != null ? Number(params.index) : -1;
+        if (delIndex < 0) return resp_({ error: 'index は必須です' });
+        return resp_(deleteSchedule_(session, delIndex));
+      }
+
       default:
         return resp_({ error: '不明な action: ' + action });
     }
@@ -616,4 +633,85 @@ function updateLeadTimeJson_(items, authHeader) {
   }
 
   return { results: results };
+}
+
+// ────────────────────────────────────────
+// スケジュール CRUD
+// スケジュール設定シート列構成:
+// A=sid B=管理番号 C=timing(weekly/yearly) D=曜日(0-6) E=月 F=日 G=時刻(0-23) H=LT名称
+// ────────────────────────────────────────
+
+var SCHED_SHEET_ID_ = '1JICZkk2GzcGIt3VWAZHzI1wMKQMXhWLw5qQNVIgamAQ';
+var SCHED_SHEET_NAME_ = 'スケジュール設定';
+
+function getScheduleSheet_() {
+  var ss = SpreadsheetApp.openById(SCHED_SHEET_ID_);
+  return ss.getSheetByName(SCHED_SHEET_NAME_);
+}
+
+function getSchedules_(session) {
+  var sheet = getScheduleSheet_();
+  if (!sheet) return { schedules: [] };
+  var data = sheet.getDataRange().getValues();
+  var schedules = [];
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    if (String(row[0]).trim() !== session.sid) continue;
+    schedules.push({
+      index:        i,           // 1-based行番号（削除・更新用）
+      sid:          String(row[0]),
+      manageNumber: String(row[1]),
+      timing:       String(row[2]),
+      weekday:      row[3] !== '' ? Number(row[3]) : '',
+      month:        row[4] !== '' ? Number(row[4]) : '',
+      date:         row[5] !== '' ? Number(row[5]) : '',
+      hour:         Number(row[6]),
+      ltName:       String(row[7])
+    });
+  }
+  Logger.log('[getSchedules_] sid=' + session.sid + ' count=' + schedules.length);
+  return { schedules: schedules };
+}
+
+function saveSchedule_(session, sched) {
+  var sheet = getScheduleSheet_();
+  if (!sheet) return { error: 'スケジュール設定シートが見つかりません' };
+
+  var row = [
+    session.sid,
+    sched.manageNumber || '',
+    sched.timing || 'weekly',
+    sched.weekday !== undefined && sched.weekday !== '' ? Number(sched.weekday) : '',
+    sched.month   !== undefined && sched.month   !== '' ? Number(sched.month)   : '',
+    sched.date    !== undefined && sched.date    !== '' ? Number(sched.date)    : '',
+    sched.hour    !== undefined ? Number(sched.hour) : 0,
+    sched.ltName  || ''
+  ];
+
+  if (sched.index && sched.index > 0) {
+    // 更新: 既存行を上書き（sidが一致することを確認）
+    var existing = sheet.getRange(sched.index + 1, 1, 1, 1).getValue();
+    if (String(existing).trim() !== session.sid) {
+      return { error: '他店舗のスケジュールは編集できません' };
+    }
+    sheet.getRange(sched.index + 1, 1, 1, 8).setValues([row]);
+    Logger.log('[saveSchedule_] updated row=' + (sched.index + 1));
+  } else {
+    // 新規追加
+    sheet.appendRow(row);
+    Logger.log('[saveSchedule_] appended');
+  }
+  return { success: true };
+}
+
+function deleteSchedule_(session, index) {
+  var sheet = getScheduleSheet_();
+  if (!sheet) return { error: 'スケジュール設定シートが見つかりません' };
+  var existing = sheet.getRange(index + 1, 1, 1, 1).getValue();
+  if (String(existing).trim() !== session.sid) {
+    return { error: '他店舗のスケジュールは削除できません' };
+  }
+  sheet.deleteRow(index + 1);
+  Logger.log('[deleteSchedule_] deleted row=' + (index + 1));
+  return { success: true };
 }
