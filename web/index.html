@@ -346,6 +346,18 @@
       </div>
       <div id="lt-status" class="status"></div>
 
+      <div class="table-wrap" id="lt-list-table-wrap" style="display:none; margin-top:1rem;">
+        <table>
+          <thead>
+            <tr>
+              <th>リードタイムID</th>
+              <th>リードタイム名称</th>
+            </tr>
+          </thead>
+          <tbody id="lt-list-results"></tbody>
+        </table>
+      </div>
+
       <div id="bulk-controls" style="display:none; margin-top:1rem;">
         <div class="form-row">
           <input type="text" id="bulk-keyword" placeholder="商品管理番号を入力して検索">
@@ -595,6 +607,7 @@ loadLtBtn.addEventListener('click', function() {
       ltList = data.leadTimeList || [];
       console.log('ltList:', JSON.stringify(ltList));
       showStatus(ltStatus, 'info', ltList.length + '件のリードタイムを取得しました');
+      renderLtList(ltList);
       document.getElementById('bulk-controls').style.display = '';
     })
     .catch(function(err) {
@@ -639,6 +652,21 @@ function doBulkSearch() {
       bulkSearchBtn.disabled = false;
       showStatus(bulkStatus, 'error', '通信エラー: ' + err.message);
     });
+}
+
+function renderLtList(list) {
+  var wrap = document.getElementById('lt-list-table-wrap');
+  var tbody = document.getElementById('lt-list-results');
+  tbody.innerHTML = '';
+  for (var i = 0; i < list.length; i++) {
+    var lt = list[i];
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + escapeHtml(String(lt.id)) + '</td>' +
+      '<td>' + escapeHtml(lt.name) + '</td>';
+    tbody.appendChild(tr);
+  }
+  wrap.style.display = '';
 }
 
 function buildLtSelect(name, list, currentValue) {
